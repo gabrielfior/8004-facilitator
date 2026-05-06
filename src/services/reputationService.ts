@@ -1,10 +1,4 @@
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  type Address,
-  zeroHash,
-} from "viem";
+import { createPublicClient, createWalletClient, http, type Address, zeroHash } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   ERC8004_NETWORK,
@@ -76,13 +70,24 @@ export async function giveFeedback(params: GiveFeedbackParams): Promise<Feedback
     const value = BigInt(score);
     const valueDecimals = 0;
 
-    console.log(`📝 Submitting feedback for agent ${agentId}: value=${value}, decimals=${valueDecimals}, tag1=${tag1}, tag2=${tag2}`);
+    console.log(
+      `📝 Submitting feedback for agent ${agentId}: value=${value}, decimals=${valueDecimals}, tag1=${tag1}, tag2=${tag2}`,
+    );
 
     const hash = await walletClient.writeContract({
       address: ERC8004_REPUTATION_REGISTRY_ADDRESS,
       abi: reputationRegistryAbi,
       functionName: "giveFeedback",
-      args: [BigInt(agentId), value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash],
+      args: [
+        BigInt(agentId),
+        value,
+        valueDecimals,
+        tag1,
+        tag2,
+        endpoint,
+        feedbackURI,
+        feedbackHash,
+      ],
     });
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
