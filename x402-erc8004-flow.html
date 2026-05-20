@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>x402 x ERC-8004 Reputation Flow</title>
+    <style>
+        :root {
+            --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-5: 1.5rem; --space-6: 2rem;
+            --font-sm: 0.8rem; --font-base: 1rem; --font-lg: 1.25rem;
+            --radius: 0.5rem;
+            --text: #1f2937; --text-muted: #6b7280;
+            --bg: #ffffff; --bg-subtle: #f9fafb; --border: #e5e7eb;
+            --c-client: #2563eb; --c-server: #0891b2; --c-agent: #7c3aed;
+            --c-fac: #ca8a04; --c-chain: #6b7280;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: var(--font-base); line-height: 1.5;
+            color: var(--text); background: var(--bg);
+            max-width: 1050px; margin: 0 auto; padding: var(--space-5);
+        }
+        header { padding: var(--space-5) 0 var(--space-3); border-bottom: 2px solid var(--border); margin-bottom: var(--space-5); }
+        header h1 { font-size: var(--font-xl); color: var(--c-client); }
+        header p { font-size: var(--font-sm); color: var(--text-muted); margin-top: 2px; }
+
+        .parties {
+            display: flex; gap: var(--space-2);
+            justify-content: center; flex-wrap: wrap;
+            margin-bottom: var(--space-5);
+        }
+        .party {
+            flex: 1; min-width: 120px; max-width: 180px;
+            padding: var(--space-3) var(--space-2);
+            border-radius: var(--radius); border: 2px solid var(--border); text-align: center;
+        }
+        .party .icon { font-size: 1.3rem; }
+        .party .name { font-weight: 700; font-size: var(--font-base); margin-top: 2px; }
+        .party .meta { font-size: 0.65rem; color: var(--text-muted); font-family: monospace; }
+        .party .role { font-size: 0.7rem; color: var(--text-muted); line-height: 1.3; }
+        .party.client { border-color: var(--c-client); }
+        .party.server { border-color: var(--c-server); }
+        .party.fac { border-color: var(--c-fac); }
+        .party.agent-eoa { border-color: var(--c-agent); }
+        .party.chain { border-color: var(--c-chain); }
+
+        .ascii-box {
+            background: #1a1a2e; color: #e0e0e0;
+            padding: var(--space-4); border-radius: var(--radius);
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.6rem; line-height: 1.15;
+            overflow-x: auto; white-space: pre;
+            margin: var(--space-3) 0;
+        }
+        .ascii-box .dim { color: #6b7280; }          /* standard x402 */
+        .ascii-box .new { color: #fbbf24; font-weight: bold; }  /* our additions */
+        .ascii-box .new-bg { background: rgba(251, 191, 36, 0.15); }  /* highlight bg for new rows */
+
+        .legend-box {
+            display: flex; gap: var(--space-4);
+            justify-content: center; flex-wrap: wrap;
+            margin: var(--space-2) 0 var(--space-4);
+            font-size: var(--font-sm);
+        }
+        .legend-item { display: flex; align-items: center; gap: var(--space-1); }
+        .legend-swatch { width: 24px; height: 4px; border-radius: 2px; display: inline-block; }
+
+        .flow { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-3) 0; }
+        .row {
+            display: grid; grid-template-columns: 28px 1fr;
+            gap: var(--space-3); padding: var(--space-2) var(--space-3);
+            border-radius: var(--radius); background: var(--bg-subtle); align-items: start;
+        }
+        .row.standard { border-left: 3px solid #6b7280; }
+        .row.new { border-left: 3px solid var(--c-agent); background: #f5f3ff; }
+        .row-num {
+            width: 24px; height: 24px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.7rem; font-weight: 700; color: #fff;
+            flex-shrink: 0;
+        }
+        .row-num.dim { background: #6b7280; }
+        .row-num.purple { background: #7c3aed; }
+        .row-num.blue { background: var(--c-client); }
+        .row-num.yellow { background: var(--c-fac); }
+        .row-num.green { background: #16a34a; }
+        .row-content { font-size: var(--font-sm); min-width: 0; }
+        .row-arrow { font-weight: 600; font-size: var(--font-sm); margin-bottom: 2px; }
+        .row-badge {
+            display: inline-block; font-size: 0.55rem; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            padding: 0.05rem 0.35rem; border-radius: 3px;
+            margin-left: var(--space-1); vertical-align: middle;
+        }
+        .row-badge.std { background: #e5e7eb; color: #4b5563; }
+        .row-badge.new { background: #ede9fe; color: #5b21b6; }
+        .row-desc { color: var(--text-muted); font-size: 0.75rem; line-height: 1.4; }
+        .row-desc code {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.7rem; background: var(--bg); padding: 0.05rem 0.25rem;
+            border-radius: 3px; border: 1px solid var(--border);
+        }
+
+        .callout {
+            padding: var(--space-3) var(--space-4);
+            border-radius: var(--radius);
+            border-left: 4px solid var(--c-agent);
+            background: var(--bg-subtle);
+            margin: var(--space-3) 0;
+            font-size: var(--font-sm);
+        }
+        .callout h4 { font-size: var(--font-base); margin-bottom: var(--space-2); color: var(--c-agent); }
+        .callout p { margin-bottom: var(--space-2); }
+        .callout code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.7rem; background: var(--bg); padding: 0.05rem 0.25rem; border-radius: 3px; border: 1px solid var(--border); }
+        .callout ul { padding-left: var(--space-4); }
+        .callout li { margin-bottom: var(--space-1); }
+
+        .arch { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-2); margin: var(--space-3) 0; }
+        .arch-item { padding: var(--space-3); border-radius: var(--radius); border: 1px solid var(--border); }
+        .arch-item h4 { font-size: var(--font-sm); }
+        .arch-item p { font-size: 0.75rem; color: var(--text-muted); }
+        .arch-item .file { font-family: monospace; font-size: 0.65rem; color: var(--text-muted); margin-top: var(--space-1); }
+
+        table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); margin: var(--space-3) 0; }
+        th, td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
+        th { font-weight: 600; background: var(--bg-subtle); font-size: 0.75rem; }
+        td { font-size: 0.75rem; }
+
+        section { margin-top: var(--space-6); }
+        h2 { font-size: var(--font-lg); margin-bottom: var(--space-3); padding-bottom: var(--space-1); border-bottom: 1px solid var(--border); }
+        h3 { font-size: var(--font-base); margin: var(--space-3) 0 var(--space-2); }
+
+        footer { text-align: center; color: var(--text-muted); font-size: var(--font-sm); padding: var(--space-4) 0; border-top: 2px solid var(--border); margin-top: var(--space-6); }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>x402 x ERC-8004 Reputation Flow</h1>
+        <p>What vanilla x402 looks like vs what we added for ERC-8004 reputation</p>
+    </header>
+
+    <div class="parties">
+        <div class="party client">
+            <div class="icon">&#x1f9d1;&#x200d;&#x1f4bb;</div>
+            <div class="name">Client</div>
+            <div class="role">Pays, rates</div>
+            <div class="meta">EOA</div>
+        </div>
+        <div class="party server">
+            <div class="icon">&#x1f5a5;&#xfe0f;</div>
+            <div class="name">Resource Server</div>
+            <div class="role">Serves /weather</div>
+            <div class="meta">FastAPI</div>
+        </div>
+        <div class="party fac">
+            <div class="icon">&#x2699;&#xfe0f;</div>
+            <div class="name">Facilitator</div>
+            <div class="role">Verifies & settles</div>
+            <div class="meta">FastAPI</div>
+        </div>
+        <div class="party agent-eoa">
+            <div class="icon">&#x1f916;</div>
+            <div class="name">Agent</div>
+            <div class="role">Receives payment,<br>signs proof,<br>builds reputation</div>
+            <div class="meta">EOA + agentId</div>
+        </div>
+        <div class="party chain">
+            <div class="icon">&#x26c8;&#xfe0f;</div>
+            <div class="name">On-chain</div>
+            <div class="role">ERC-8004 contracts<br>+ FeedbackGateway</div>
+            <div class="meta">Anvil fork</div>
+        </div>
+    </div>
+
+    <div class="legend-box">
+        <span class="legend-item"><span class="legend-swatch" style="background:#6b7280"></span> Standard x402 (unchanged)</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#7c3aed"></span> ERC-8004 addition (new)</span>
+    </div>
+
+    <section>
+        <h2>Phase 0: Agent Registration &amp; Discovery</h2>
+
+        <div class="callout">
+            <h4>How agents register and how clients discover them</h4>
+            <p><strong>Agent registration (on-chain):</strong></p>
+            <ul>
+                <li>Agent generates a fresh EOA and calls <code>IdentityRegistry.register()</code> on-chain</li>
+                <li>This mints an ERC-721 NFT with a unique <code>agentId</code> (e.g. 33061)</li>
+                <li>The agent's EOA is the NFT owner. The agent can set <code>tokenURI(agentId)</code> to a JSON registration file listing their services</li>
+            </ul>
+            <p><strong>Agent discovery (how clients find agents):</strong></p>
+            <ul>
+                <li>Shared via directory, marketplace, or known listing</li>
+                <li>Client queries <code>IdentityRegistry.tokenURI(agentId)</code> to fetch registration file with service endpoints (signing API, resource server URL, etc.)</li>
+            </ul>
+        </div>
+
+        <div class="ascii-box">    <span class="dim">Agent Registration (done once, before any payment)</span>
+    <span class="dim">=================================================================</span>
+    <span class="dim">   Agent                                On-chain (IdentityRegistry)</span>
+    <span class="dim">     |                                        |</span>
+    <span class="dim">     |  register()                             |</span>
+    <span class="dim">     |---------------------------------------->|</span>
+    <span class="dim">     |  returns agentId = 33061                |</span>
+    <span class="dim">     |  emits Transfer(0, AgentEOA, 33061)     |</span>
+    <span class="dim">     |  emits Registered(33061, "", AgentEOA)  |</span>
+    <span class="dim">     |                                        |</span>
+    <span class="dim">     |  setTokenURI(33061, "ipfs://...")       |</span>
+    <span class="dim">     |---------------------------------------->|</span></div>
+    </section>
+
+    <section>
+        <h2>Phase 1: Payment Flow</h2>
+
+        <div class="legend-box">
+            <span class="legend-item"><span class="legend-swatch" style="background:#6b7280"></span> Standard x402 — same as any vanilla x402 payment</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#7c3aed"></span> ERC-8004 Δ — <strong>payee is Agent EOA, not Server wallet</strong></span>
+        </div>
+
+        <div class="flow">
+            <div class="row standard">
+                <div><div class="row-num dim">1</div></div>
+                <div class="row-content">
+                    <div class="row-arrow">Client &rarr; Resource Server <span class="row-badge std">x402</span></div>
+                    <div class="row-desc"><code>GET /weather</code> with no payment header. Server returns <strong>402</strong> + <code>X-Payment-Requirements</code>: pay USDC $0.01.</div>
+                </div>
+            </div>
+            <div class="row standard">
+                <div><div class="row-num dim">2</div></div>
+                <div class="row-content">
+                    <div class="row-arrow">Client &rarr; Facilitator <span class="row-badge std">x402</span></div>
+                    <div class="row-desc">Client signs EIP-3009 <code>TransferWithAuthorization</code>. Sends <code>POST /verify</code>. Facilitator validates signature + simulates.</div>
+                </div>
+            </div>
+            <div class="row standard">
+                <div><div class="row-num dim">3</div></div>
+                <div class="row-content">
+                    <div class="row-arrow">Client &rarr; Resource Server <span class="row-badge std">x402</span></div>
+                    <div class="row-desc">Retries <code>GET /weather</code> with <code>PAYMENT-SIGNATURE</code> header. Middleware intercepts.</div>
+                </div>
+            </div>
+            <div class="row standard">
+                <div><div class="row-num dim">4</div></div>
+                <div class="row-content">
+                    <div class="row-arrow">Server &rarr; Facilitator <span class="row-badge std">x402</span></div>
+                    <div class="row-desc">Server calls <code>POST /settle</code>. Facilitator executes <code>transferWithAuthorization</code>.</div>
+                </div>
+            </div>
+            <div class="row new">
+                <div><div class="row-num purple">4a</div></div>
+                <div class="row-content">
+                    <div class="row-arrow">Settlement beneficiary <span class="row-badge new">ERC-8004</span></div>
+                    <div class="row-desc">In vanilla x402, USDC goes to the <strong>Server's wallet</strong>. In our flow, <code>pay_to</code> is the <strong>Agent's EOA</strong>. The Server never touches the payment — it's purely a frontend for the Agent's service.</div>
+                </div>
+            </div>
+            <div class="row standard">
+                <div><div class="row-num dim">5</div></div>
+                <div class="row-content">
+                    <div class="row-arrow">Server &rarr; Client <span class="row-badge std">x402</span></div>
+                    <div class="row-desc">Weather data returned (<code>200 OK</code>). <code>PAYMENT-RESPONSE</code> header includes settlement tx hash.</div>
+                </div>
+            </div>
+        </div>
+
+        <h3>ASCII: Payment Flow</h3>
+        <div class="ascii-box">   <span class="dim">Client              Resource              Facilitator            Agent              On-chain</span>
+                        <span class="dim">Server                                    EOA</span>
+    <span class="dim">  1 |-- GET /weather -->|                       |                     |                   |</span>
+    <span class="dim">    |&lt;-- 402 + price ---|                       |                     |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  2 |-------------------|---- POST /verify ----->|                     |                   |</span>
+    <span class="dim">    |                   |                       |-- simulate -------->|                   |</span>
+    <span class="dim">    |                   |                       |   (eth_call)        |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  3 |-- GET /weather -->|                       |                     |                   |</span>
+    <span class="dim">    |   + PAYMENT-SIG   |                       |                     |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  4 |                   |--- POST /settle ------>|                     |                   |</span>
+    <span class="new">    |                   |                       |-- transferWith------+-- USDC $0.01 ---->|</span>
+    <span class="new">    |                   |                       |   Authorization     |  (to Agent EOA,  |</span>
+    <span class="new">    |                   |                       |                     |   NOT server)     |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  5 |&lt;-- 200 + tx hash -|                       |                     |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+
+
+<span class="dim">   Dim text = standard x402 (unchanged)</span>
+<span class="new">   Gold text = ERC-8004 addition</span>
+   &nbsp;
+   <span class="dim">In vanilla x402, the Resource Server receives the payment.</span>
+   <span class="new">In our flow, the pay_to address is the Agent's EOA.</span>
+   <span class="new">The server is just a frontend — it never touches the USDC.</span>
+   <span class="new">The Agent gets paid and builds on-chain reputation.</span></div>
+    </section>
+
+    <section>
+        <h2>Phase 2: Proof of Work &amp; Reputation (entirely new)</h2>
+
+        <div class="legend-box">
+            <span class="legend-item"><span class="legend-swatch" style="background:#7c3aed"></span> All new — doesn't exist in vanilla x402</span>
+        </div>
+
+        <div class="flow">
+            <div class="row new">
+                <div><div class="row-num purple">6</div></div>
+                <div class="row-content">
+                    <div class="row-arrow">Client &rarr; Agent's signing endpoint <span class="row-badge new">new</span></div>
+                    <div class="row-desc">
+                        Client sends <code>POST /sign-proof</code> with <code>{ settlementTxHash, requestBody, responseBody }</code>.<br>
+                        Agent verifies the settlement tx on-chain (checks receipt, confirms USDC sent to Agent's EOA). If valid, signs <code>keccak256(agentId || req || resp)</code> with Agent's private key. Returns <code>X-Reputation-Proof</code>.
+                    </div>
+                </div>
+            </div>
+            <div class="row new">
+                <div><div class="row-num green">7</div></div>
+                <div class="row-content">
+                    <div class="row-arrow">Client &rarr; On-chain <span class="row-badge new">new</span></div>
+                    <div class="row-desc">
+                        Single "submit feedback" transaction. Internally:<br>
+                        &nbsp; (a) <code>FeedbackGateway.markUsed(hash)</code> — dedup<br>
+                        &nbsp; (b) <code>ReputationRegistry.giveFeedback(agentId, 95, "x402")</code> — on-chain reputation<br>
+                        &nbsp; (c) If (b) reverts, <code>FeedbackGateway.unmarkUsed(hash)</code> — retriable
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <h3>ASCII: Proof &amp; Reputation</h3>
+        <div class="ascii-box">   <span class="dim">Client              Resource              Facilitator            Agent              On-chain</span>
+                        <span class="dim">Server                                                   (contracts)</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="new">  6 |-- POST /sign-proof (settlementTx, req, resp) ------------>|                   |</span>
+    <span class="new">    |                   |                       |                     |(verifies tx       |</span>
+    <span class="new">    |                   |                       |                     | on-chain, signs   |</span>
+    <span class="new">    |                   |                       |                     | proof with own    |</span>
+    <span class="new">    |                   |                       |                     | private key)      |</span>
+    <span class="new">    |&lt;-- X-Rep-Proof ---|                       |                     |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="new">  7 |------------------|-----------------------|---------------------|-- markUsed ------>| FeedbackGw</span>
+    <span class="new">    |                   |                       |                     |-- giveFeedback -->| ReputationR</span>
+    <span class="new">    |                   |                       |                     |  (unmark on fail) |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+
+
+   <span class="new">Steps 6-7 don't exist in vanilla x402. They are the entire ERC-8004 addition.</span></div>
+    </section>
+
+    <section>
+        <h2>Full ASCII (all phases)</h2>
+        <div class="ascii-box">   <span class="dim">Client              Resource              Facilitator            Agent              On-chain</span>
+                        <span class="dim">Server                                                   (contracts)</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">    |                   [===== Phase 0: Agent Registration =====]   |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="new">    |                   |                       |                     |-- register() ---->| IdentityR</span>
+    <span class="new">    |                   |                       |                     |&lt;-- agentId ------|  (mints NFT)</span>
+    <span class="new">    |                   |                       |                     |-- setTokenURI --->|  (services)</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">    |                   [====== Phase 1: Payment =====]               |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  1 |-- GET /weather -->|                       |                     |                   |</span>
+    <span class="dim">    |&lt;-- 402 + price ---|                       |                     |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  2 |-------------------|---- POST /verify ----->|                     |                   |</span>
+    <span class="dim">    |                   |                       |-- simulate -------->|                   |</span>
+    <span class="dim">    |                   |                       |   (eth_call)        |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  3 |-- GET/weather --> |                       |                     |                   |</span>
+    <span class="dim">    |   + PAYMENT-SIG   |                       |                     |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  4 |                   |--- POST /settle ------>|                     |                   |</span>
+    <span class="new">    |                   |                       |-- transferWith------+-- USDC $0.01 ---->|</span>
+    <span class="new">    |                   |                       |   Authorization     |  (to Agent EOA)  |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">  5 |&lt;-- 200 + tx hash -|                       |                     |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="dim">    |                   [===== Phase 2: Reputation =====]           |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="new">  6 |-- POST /sign-proof (settlementTx, req, resp) ------------>|                   |</span>
+    <span class="new">    |                   |                       |                     |(verifies tx,      |</span>
+    <span class="new">    |                   |                       |                     | signs with own    |</span>
+    <span class="new">    |                   |                       |                     | private key)      |</span>
+    <span class="new">    |&lt;-- X-Rep-Proof ---|                       |                     |                   |</span>
+    <span class="dim">    |                   |                       |                     |                   |</span>
+    <span class="new">  7 |------------------|-----------------------|---------------------|-- markUsed ------>| FeedbackGw</span>
+    <span class="new">    |                   |                       |                     |-- giveFeedback -->| ReputationR</span>
+
+
+   <span class="dim">Dim text  = standard x402 flow</span>
+   <span class="new">Gold text = ERC-8004 additions</span>
+
+   <span class="new">The delta is small but meaningful:</span>
+   <span class="new">  • Step 4a: pay_to = Agent EOA (not Server wallet)</span>
+   <span class="new">  • Step 6:   Agent signs proof-of-interaction (new endpoint)</span>
+   <span class="new">  • Step 7:   Client submits on-chain reputation (new contracts)</span>
+   <span class="new">  • Phase 0:  Agent registration on IdentityRegistry (new contract)</span></div>
+    </section>
+
+    <section>
+        <h2>Architecture</h2>
+        <div class="arch">
+            <div class="arch-item"><h4>MockUSDC</h4><p>EIP-3009 token on the fork.</p><div class="file">contracts/MockUSDC.sol</div></div>
+            <div class="arch-item"><h4>FeedbackGateway</h4><p>On-chain dedup (mapping bytes32&rarr;bool). SSTORE-first.</p><div class="file">contracts/FeedbackGateway.sol <span class="row-badge new">new</span></div></div>
+            <div class="arch-item"><h4>ReputationMiddleware</h4><p>Runs on Agent's infra. Signs proof with Agent's own key.</p><div class="file">main.py <span class="row-badge new">new</span></div></div>
+            <div class="arch-item"><h4>IdentityRegistry</h4><p>ERC-721 agent registry. register() mints NFT.</p><div class="file">ERC-8004 <span class="row-badge new">new</span></div></div>
+            <div class="arch-item"><h4>ReputationRegistry</h4><p>Stores feedback. getSummary() for aggregation.</p><div class="file">ERC-8004 <span class="row-badge new">new</span></div></div>
+            <div class="arch-item"><h4>x402 SDK</h4><p>Coinbase SDK. Exact EVM scheme.</p><div class="file">pip x402 <span class="row-badge std">x402</span></div></div>
+        </div>
+    </section>
+
+    <section>
+        <h2>Key Design Decisions</h2>
+        <table>
+            <thead><tr><th>Decision</th><th>Choice</th><th>Rationale</th></tr></thead>
+            <tbody>
+                <tr><td>Agent key custody</td><td>Agent holds own key</td><td>Server never sees it. Agent runs a signing endpoint separately.</td></tr>
+                <tr><td>Agent discovery</td><td>tokenURI on IdentityRegistry</td><td>Client fetches agent's registration file to get service URLs.</td></tr>
+                <tr><td>Token</td><td>MockUSDC (fork)</td><td>Real USDC has EIP-712 encoding mismatch. TODO: revisit.</td></tr>
+                <tr><td>Dedup</td><td>FeedbackGateway (on-chain)</td><td>Client can retry if facilitator censors.</td></tr>
+                <tr><td>Feedback</td><td>Single client tx</td><td>One action: markUsed &rarr; giveFeedback &rarr; unmark on failure.</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <footer>
+        <p>naive_implementation &mdash; x402-erc-8004 &mdash; May 2026</p>
+    </footer>
+</body>
+</html>
