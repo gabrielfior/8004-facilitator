@@ -6,6 +6,21 @@ Single-process demo of the [x402 Python SDK](https://github.com/coinbase/x402/tr
 
 - [Foundry](https://book.getfoundry.sh/) (`anvil`, `forge`)
 - [uv](https://docs.astral.sh/uv/)
+- Anvil with **EIP-7702** support (recent Foundry)
+
+## Dependencies (Foundry)
+
+```bash
+cd naive_implementation
+forge install erc-8004/erc-8004-contracts
+forge install foundry-rs/forge-std
+forge build
+forge test
+```
+
+## Feedback (EIP-7702)
+
+[`FeedbackGateway`](contracts/FeedbackGateway.sol) is deployed once. The **client** signs EIP-7702 authorization delegating to that address; the facilitator sends `submitFeedback` **to the client EOA** so `ReputationRegistry` records the client as author. See [docs/feedback-attribution.md](docs/feedback-attribution.md).
 
 ## Run
 
@@ -19,7 +34,7 @@ anvil --fork-url <RPC_URL> --chain-id 1
 
 ```bash
 cd naive_implementation
-forge build   # once: compiles contracts/FeedbackGateway.sol
+forge build
 uv sync
 uv run python main.py
 ```
@@ -27,9 +42,10 @@ uv run python main.py
 The script will:
 
 1. Transfer mainnet USDC to the client account (from facilitator on the fork)
-2. Start the facilitator on `http://127.0.0.1:4022`
-3. Start the resource server on `http://127.0.0.1:4021`
-4. Pay for `GET /weather` with USDC (EIP-3009) and print the settlement tx hash
+2. Deploy `FeedbackGateway` and register an agent on ERC-8004
+3. Start the facilitator on `http://127.0.0.1:4022`
+4. Start the resource server on `http://127.0.0.1:4021`
+5. Pay for `GET /weather`, then submit feedback via EIP-7702 `submitFeedback`
 
 ## Optional environment
 
@@ -39,6 +55,6 @@ The script will:
 | `FACILITATOR_PRIVATE_KEY` | Anvil account #0 |
 | `CLIENT_PRIVATE_KEY` | fresh key (funded by facilitator) |
 | `PAYMENT_TOKEN` | `usdc` (mainnet USDC) or `dai` |
-| `AGENT_PRIVATE_KEY` | Anvil account #2 |
+| `AGENT_PRIVATE_KEY` | fresh key generated if unset |
 | `FACILITATOR_PORT` | `4022` |
 | `SERVER_PORT` | `4021` |

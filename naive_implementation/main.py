@@ -33,7 +33,7 @@ import httpx
 import uvicorn
 from eth_account import Account
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from web3 import Web3
 
 from x402 import x402Client, x402Facilitator, x402ResourceServer
@@ -49,7 +49,7 @@ from x402.mechanisms.evm.exact import (
     register_exact_evm_client,
     register_exact_evm_facilitator,
 )
-from x402.schemas import AssetAmount, Network, PaymentRequirements, parse_payment_payload
+from x402.schemas import AssetAmount, Network, PaymentPayload, PaymentRequirements
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
@@ -147,6 +147,7 @@ PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
 # ERC-8004 contract addresses
 IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
 REPUTATION_REGISTRY = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+ERC8004_CONTRACTS_ROOT = ROOT / "lib" / "erc-8004-contracts"
 
 PRICE_AMOUNT = "10000"  # $0.01 USDC (6 decimals)
 FUND_USDC = 50_000_000  # 50 USDC to fund the client
@@ -216,17 +217,78 @@ def _generate_fresh_key() -> Account:
     return acct
 
 
-def _deploy_feedback_gateway(w3: Web3, deployer_key: str) -> str:
+def _load_feedback_gateway_artifact() -> dict:
     artifact_path = ROOT / "out" / "FeedbackGateway.sol" / "FeedbackGateway.json"
     if not artifact_path.exists():
-        raise RuntimeError(f"Missing {artifact_path}. Run: cd {ROOT} && forge build --via-ir --optimize --optimizer-runs 200")
-    artifact = json.loads(artifact_path.read_text())
+        raise RuntimeError(f"Missing {artifact_path}. Run: cd {ROOT} && forge build")
+    return json.loads(artifact_path.read_text())
+
+
+def _load_reputation_registry_abi() -> list:
+    abi_path = ERC8004_CONTRACTS_ROOT / "abis" / "ReputationRegistry.json"
+    if not abi_path.exists():
+        raise RuntimeError(
+            f"Missing {abi_path}. Run: cd {ROOT} && forge install erc-8004/erc-8004-contracts"
+        )
+    return json.loads(abi_path.read_text())
+
+
+def _assert_feedback_client_address(
+    w3: Web3,
+    receipt,
+    *,
+    agent_id: int,
+    client_address: str,
+) -> None:
+    """Assert ReputationRegistry NewFeedback lists the client EOA as clientAddress."""
+    registry = w3.eth.contract(
+        address=Web3.to_checksum_address(REPUTATION_REGISTRY),
+        abi=_load_reputation_registry_abi(),
+    )
+    client_checksum = Web3.to_checksum_address(client_address)
+    events = registry.events.NewFeedback().process_receipt(receipt)
+    matching = [e for e in events if e["args"]["agentId"] == agent_id]
+    assert matching, (
+        f"No NewFeedback event for agentId={agent_id} in tx {receipt.transactionHash.hex()}"
+    )
+    author = Web3.to_checksum_address(matching[-1]["args"]["clientAddress"])
+    assert author == client_checksum, (
+        f"feedback clientAddress {author} != expected client EOA {client_checksum}"
+    )
+    last_idx = registry.functions.getLastIndex(agent_id, client_checksum).call()
+    assert last_idx > 0, f"getLastIndex(agentId={agent_id}, client) returned 0 after feedback"
+
+
+def _gas_limit_from_estimate(estimated: int, buffer_percent: int = 20) -> int:
+    return estimated + max(estimated * buffer_percent // 100, 21_000)
+
+
+def _sign_eip7702_authorization(
+    w3: Web3,
+    client_key: str,
+    delegate_address: str,
+) -> object:
+    """Client signs delegation of their EOA to FeedbackGateway bytecode."""
+    client = Account.from_key(client_key)
+    nonce = w3.eth.get_transaction_count(client.address)
+    return Account.sign_authorization(
+        {
+            "chainId": w3.eth.chain_id,
+            "address": Web3.to_checksum_address(delegate_address),
+            "nonce": nonce,
+        },
+        client_key,
+    )
+
+
+def _deploy_feedback_gateway(w3: Web3, deployer_key: str) -> str:
+    artifact = _load_feedback_gateway_artifact()
     deployer = Account.from_key(deployer_key)
     contract = w3.eth.contract(abi=artifact["abi"], bytecode=artifact["bytecode"]["object"])
     tx = contract.constructor().build_transaction({
         "from": deployer.address,
         "nonce": w3.eth.get_transaction_count(deployer.address),
-        "gas": 200_000,
+        "gas": 3_000_000,
         "maxFeePerGas": w3.to_wei(2, "gwei"),
         "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
         "chainId": w3.eth.chain_id,
@@ -234,6 +296,8 @@ def _deploy_feedback_gateway(w3: Web3, deployer_key: str) -> str:
     signed = deployer.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    if not receipt.status or not receipt.contractAddress:
+        raise RuntimeError(f"FeedbackGateway deployment failed: status={receipt.status}")
     addr = Web3.to_checksum_address(receipt.contractAddress)
     logger.info("Deployed FeedbackGateway at %s", addr)
     return addr
@@ -387,34 +451,40 @@ def bootstrap() -> LocalSetup:
 # Facilitator (FastAPI + x402Facilitator)
 # ---------------------------------------------------------------------------
 
-_facilitator_core: x402Facilitator | None = None
+def _build_facilitator_core(setup: LocalSetup) -> x402Facilitator:
+    evm_signer = FacilitatorWeb3Signer(
+        private_key=setup.facilitator_account.key.hex(),
+        rpc_url=setup.rpc_url,
+    )
+    core = x402Facilitator()
+    register_exact_evm_facilitator(core, evm_signer, networks=setup.network)
+    return core
 
 
-def _get_facilitator_core(setup: LocalSetup) -> x402Facilitator:
-    global _facilitator_core
-    if _facilitator_core is None:
-        evm_signer = FacilitatorWeb3Signer(
-            private_key=setup.facilitator_account.key.hex(),
-            rpc_url=setup.rpc_url,
-        )
-        core = x402Facilitator()
-        register_exact_evm_facilitator(core, evm_signer, networks=setup.network)
-        _facilitator_core = core
-    return _facilitator_core
+class FacilitatorPaymentRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    x402_version: int = Field(default=2, alias="x402Version")
+    payment_payload: PaymentPayload = Field(alias="paymentPayload")
+    payment_requirements: PaymentRequirements = Field(alias="paymentRequirements")
 
 
-class VerifyRequest(BaseModel):
-    paymentPayload: dict
-    paymentRequirements: dict
-
-
-class SettleRequest(BaseModel):
-    paymentPayload: dict
-    paymentRequirements: dict
+async def _facilitator_payment_action(
+    facilitator: x402Facilitator,
+    request: FacilitatorPaymentRequest,
+    action: str,
+) -> dict:
+    try:
+        fn = facilitator.verify if action == "verify" else facilitator.settle
+        response = await fn(request.payment_payload, request.payment_requirements)
+        return response.model_dump(by_alias=True, exclude_none=True)
+    except Exception as exc:
+        logger.exception("%s failed", action)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def create_facilitator_app(setup: LocalSetup) -> FastAPI:
-    facilitator = _get_facilitator_core(setup)
+    facilitator = _build_facilitator_core(setup)
     app = FastAPI(title="x402 Facilitator (local)", version="0.1.0")
 
     @app.get("/health")
@@ -422,26 +492,12 @@ def create_facilitator_app(setup: LocalSetup) -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/verify")
-    async def verify(request: VerifyRequest) -> dict:
-        try:
-            payload = parse_payment_payload(request.paymentPayload)
-            requirements = PaymentRequirements.model_validate(request.paymentRequirements)
-            response = await facilitator.verify(payload, requirements)
-            return response.model_dump(by_alias=True, exclude_none=True)
-        except Exception as exc:
-            logger.exception("verify failed")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    async def verify(request: FacilitatorPaymentRequest) -> dict:
+        return await _facilitator_payment_action(facilitator, request, "verify")
 
     @app.post("/settle")
-    async def settle(request: SettleRequest) -> dict:
-        try:
-            payload = parse_payment_payload(request.paymentPayload)
-            requirements = PaymentRequirements.model_validate(request.paymentRequirements)
-            response = await facilitator.settle(payload, requirements)
-            return response.model_dump(by_alias=True, exclude_none=True)
-        except Exception as exc:
-            logger.exception("settle failed")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    async def settle(request: FacilitatorPaymentRequest) -> dict:
+        return await _facilitator_payment_action(facilitator, request, "settle")
 
     @app.get("/supported")
     async def supported() -> dict:
@@ -554,70 +610,92 @@ def _wait_for_http(url: str, timeout: float = 15.0) -> None:
 def _submit_feedback(
     w3: Web3,
     client_key: str,
+    relayer_key: str,
     feedback_gateway: str,
-    reputation_registry: str,
     agent_id: int,
     proof_hex: str,
     req_body: bytes,
     resp_body: bytes,
 ) -> bool:
+    """EIP-7702: client delegates to FeedbackGateway, submitFeedback keeps client as registry author."""
     feedback_hash = Web3.solidity_keccak(
         ["uint256", "bytes", "bytes", "bytes"],
         [agent_id, req_body, resp_body, bytes.fromhex(proof_hex.removeprefix("0x"))]
     )
 
-    # 1. Mark hash on FeedbackGateway
-    gateway = w3.eth.contract(address=Web3.to_checksum_address(feedback_gateway), abi=[
-        {"inputs":[{"name":"hash","type":"bytes32"}],"name":"markUsed","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
-        {"inputs":[{"name":"hash","type":"bytes32"}],"name":"unmarkUsed","outputs":[],"stateMutability":"nonpayable","type":"function"},
-    ])
+    gateway_artifact = _load_feedback_gateway_artifact()
+    gateway = w3.eth.contract(
+        address=Web3.to_checksum_address(feedback_gateway),
+        abi=gateway_artifact["abi"],
+    )
     client_acct = Account.from_key(client_key)
-    nonce = w3.eth.get_transaction_count(client_acct.address)
+    relayer_acct = Account.from_key(relayer_key)
 
-    is_new = gateway.functions.markUsed(feedback_hash).call({"from": client_acct.address})
-    if not is_new:
+    if gateway.functions.hasBeenUsed(feedback_hash).call():
         logger.warning("Feedback hash already used — duplicate feedback blocked")
         return False
 
-    tx = gateway.functions.markUsed(feedback_hash).build_transaction({
-        "from": client_acct.address, "nonce": nonce, "gas": 100_000,
-        "maxFeePerGas": w3.to_wei(2, "gwei"), "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
+    authorization = _sign_eip7702_authorization(w3, client_key, feedback_gateway)
+    params = (
+        agent_id,
+        95,
+        0,
+        "x402",
+        "weather",
+        SERVER_URL,
+        "",
+        feedback_hash,
+    )
+    calldata = gateway.encode_abi(
+        "submitFeedback",
+        args=[Web3.to_checksum_address(REPUTATION_REGISTRY), params],
+    )
+    tx_base = {
         "chainId": w3.eth.chain_id,
-    })
-    signed = client_acct.sign_transaction(tx)
-    receipt = w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(signed.raw_transaction))
+        "from": relayer_acct.address,
+        "to": client_acct.address,
+        "nonce": w3.eth.get_transaction_count(relayer_acct.address),
+        "value": 0,
+        "maxFeePerGas": w3.to_wei(2, "gwei"),
+        "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
+        "data": calldata,
+        "authorizationList": [authorization],
+    }
+    estimated = w3.eth.estimate_gas(tx_base)
+    gas_limit = _gas_limit_from_estimate(estimated)
+    tx = {**tx_base, "gas": gas_limit}
+    logger.info(
+        "submitFeedback gas estimate=%s limit=%s (+%s%% buffer)",
+        estimated,
+        gas_limit,
+        round((gas_limit - estimated) * 100 / estimated) if estimated else 0,
+    )
+    signed = relayer_acct.sign_transaction(tx)
+    receipt = w3.eth.wait_for_transaction_receipt(
+        w3.eth.send_raw_transaction(signed.raw_transaction)
+    )
+    gas_used = receipt.gasUsed
+    logger.info(
+        "EIP-7702 submitFeedback: status=%s gasUsed=%s (%.0f%% of limit)",
+        receipt.status,
+        gas_used,
+        (gas_used * 100 / gas_limit) if gas_limit else 0,
+    )
+
     if not receipt.status:
         return False
-    logger.info("FeedbackGateway.markUsed: status=%s", receipt.status)
 
-    # 2. Submit feedback to ReputationRegistry
-    registry = w3.eth.contract(address=Web3.to_checksum_address(reputation_registry), abi=[
-        {"inputs":[{"name":"agentId","type":"uint256"},{"name":"value","type":"int128"},{"name":"valueDecimals","type":"uint8"},{"name":"tag1","type":"string"},{"name":"tag2","type":"string"},{"name":"endpoint","type":"string"},{"name":"feedbackURI","type":"string"},{"name":"feedbackHash","type":"bytes32"}],"name":"giveFeedback","outputs":[],"stateMutability":"nonpayable","type":"function"},
-    ])
-    nonce += 1
-    try:
-        tx2 = registry.functions.giveFeedback(
-            agent_id, 95, 0, "x402", "weather", SERVER_URL, "", feedback_hash
-        ).build_transaction({
-            "from": client_acct.address, "nonce": nonce, "gas": 300_000,
-            "maxFeePerGas": w3.to_wei(2, "gwei"), "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
-        signed2 = client_acct.sign_transaction(tx2)
-        receipt2 = w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(signed2.raw_transaction))
-        logger.info("ReputationRegistry.giveFeedback: status=%s", receipt2.status)
-        return receipt2.status
-    except Exception as exc:
-        logger.error("giveFeedback failed: %s", exc)
-        # Unmark on failure
-        tx3 = gateway.functions.unmarkUsed(feedback_hash).build_transaction({
-            "from": client_acct.address, "nonce": nonce, "gas": 50_000,
-            "maxFeePerGas": w3.to_wei(2, "gwei"), "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-            "chainId": w3.eth.chain_id,
-        })
-        signed3 = client_acct.sign_transaction(tx3)
-        w3.eth.send_raw_transaction(signed3.raw_transaction)
-        return False
+    _assert_feedback_client_address(
+        w3,
+        receipt,
+        agent_id=agent_id,
+        client_address=client_acct.address,
+    )
+    logger.info(
+        "Verified NewFeedback.clientAddress == client EOA %s",
+        client_acct.address,
+    )
+    return True
 
 
 async def run_paying_client(setup: LocalSetup) -> None:
@@ -654,9 +732,14 @@ async def run_paying_client(setup: LocalSetup) -> None:
         # Submit feedback on-chain
         print("\n--- Submitting feedback ---")
         ok = _submit_feedback(
-            w3, setup.client_account.key.hex(),
-            setup.feedback_gateway, REPUTATION_REGISTRY,
-            setup.agent_id, proof, b"", json.dumps(body).encode(),
+            w3,
+            setup.client_account.key.hex(),
+            setup.facilitator_account.key.hex(),
+            setup.feedback_gateway,
+            setup.agent_id,
+            proof,
+            b"",
+            json.dumps(body).encode(),
         )
         print(f"  Feedback submitted: {'YES' if ok else 'FAILED'}")
 

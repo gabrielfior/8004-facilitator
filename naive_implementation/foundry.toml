@@ -6,4 +6,7 @@ solc_version = "0.8.20"
 via_ir = true
 optimizer = true
 optimizer_runs = 200
-remappings = ["@openzeppelin/=lib/openzeppelin-contracts/"]
+remappings = [
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "@erc8004/=lib/erc-8004-contracts/",
+]

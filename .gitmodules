@@ -7,3 +7,9 @@
 [submodule "naive_implementation/lib/openzeppelin-contracts"]
 	path = naive_implementation/lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "naive_implementation/lib/erc-8004-contracts"]
+	path = naive_implementation/lib/erc-8004-contracts
+	url = https://github.com/erc-8004/erc-8004-contracts
+[submodule "naive_implementation/lib/forge-std"]
+	path = naive_implementation/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std

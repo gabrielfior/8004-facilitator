@@ -30,16 +30,15 @@
 2. **Pay** — client pays agent $0.01 USDC via x402 EIP-3009 (`transferWithAuthorization`)
 3. **Sign** — `ReputationMiddleware` signs `keccak256(agentId || reqBody || respBody)` with agent's key → `X-Reputation-Proof`
 4. **Feedback** — client submits feedback on-chain:
-   - `FeedbackGateway.markUsed(hash)` — dedup (SSTORE first, retriable on failure)
-   - `ReputationRegistry.giveFeedback(agentId, 95, 0, "x402", "weather", ...)` — on-chain reputation
-5. **Dedup** — `markUsed` returns `false` for duplicate proof → feedback blocked
+   - EIP-7702 tx to client EOA: `FeedbackGateway.submitFeedback(registry, params)` (facilitator pays gas; client is `msg.sender` on registry)
+5. **Dedup** — global `usedHashes` on deployed gateway via `dedupStore`; whole tx reverts if `giveFeedback` fails
 
 ## Files
 
 | File | Action |
 |------|--------|
 | `naive_implementation/main.py` | Single-file demo (all steps inline) |
-| `naive_implementation/contracts/FeedbackGateway.sol` | On-chain dedup (`mapping(bytes32 => bool)`) |
+| `naive_implementation/contracts/FeedbackGateway.sol` | EIP-7702 delegate + global dedup (`lib/erc-8004-contracts` ABIs) |
 | `naive_implementation/foundry.toml` | Solidity build config |
 | `naive_implementation/.env` | Private keys |
 | `docs/x402-erc8004-implementation.md` | This file |
@@ -53,7 +52,7 @@
 | **Agent Identity** | ERC-8004 IdentityRegistry | Real on-chain agent registration via `register()`. Requires fresh EOA (Anvil defaults have EIP-7702 delegation on mainnet). |
 | **Signing** | `eth_account` ECDSA | Simple EIP-191 signed hash of `(agentId, reqBody, respBody)`. |
 | **Middleware** | `ReputationMiddleware` wraps `PaymentMiddlewareASGI` | Outer ASGI middleware intercepts response after payment settlement. |
-| **Feedback** | Client submits directly via `giveFeedback()` | Client uses own EOA. `msg.sender` is the feedback author. |
+| **Feedback** | EIP-7702 `submitFeedback` via deployed `FeedbackGateway` | Client EOA delegates to gateway; registry sees client as author. |
 
 ## Running
 
