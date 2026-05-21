@@ -180,8 +180,57 @@
         <div class="row new">
             <div><div class="row-num purple">8</div></div>
             <div class="row-content">
-                <div class="row-arrow">Client &rarr; On-chain <span class="row-badge new">new</span></div>
-                <div class="row-desc">Verifies <code>commitments[agentId][hash(agentId, reqHash, txHash)]</code> from chain. Calls <code>submitFeedback(registry, params)</code> via EIP-7702 — checks commitment + settlement dedup + hash dedup.</div>
+                <div class="row-arrow">Client &rarr; On-chain (pays own gas) <span class="row-badge new">new</span></div>
+                <div class="row-desc">Verifies <code>commitments[agentId][hash(agentId, reqHash, txHash)]</code> from chain. Signs EIP-7702 auth, sends tx <code>from: client, to: client, authorizationList: [auth], data: submitFeedback()</code>. Contract checks commitment + settlement dedup + hash dedup. No relayer.</div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>Detailed: Client submits feedback (step 8)</h2>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:var(--space-3);">The client submits on-chain feedback without any relayer or facilitator involvement. EIP-7702 delegation ensures <code>msg.sender</code> on <code>ReputationRegistry</code> is the client EOA (correct attribution).</p>
+
+        <div class="row new">
+            <div><div class="row-num purple">8a</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Compute hashes <span class="row-badge new">client</span></div>
+                <div class="row-desc"><code>reqHash = keccak256(canonicalJSON(reqBody))</code><br><code>respHash = keccak256(canonicalJSON(respBody))</code><br><code>feedbackHash = keccak256(abi.encode(agentId, reqHash, respHash, value, valueDecimals))</code></div>
+            </div>
+        </div>
+
+        <div class="row new">
+            <div><div class="row-num purple">8b</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Poll on-chain commitment <span class="row-badge new">client</span></div>
+                <div class="row-desc">Poll <code>FeedbackGateway.commitments[agentId][keccak256(abi.encode(agentId, reqHash, settlementTxHash))]</code> until <code>true</code>. Waits for facilitator/agent to record it after settlement.</div>
+            </div>
+        </div>
+
+        <div class="row new">
+            <div><div class="row-num purple">8c</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Sign EIP-7702 authorization <span class="row-badge new">client</span></div>
+                <div class="row-desc">Client signs an EIP-7702 authorization delegating its EOA to <code>FeedbackGateway</code> (one signature):<br><code>auth = walletClient.signAuthorization({ contractAddress: feedbackGateway })</code><br>This is the only signature the client produces for feedback.</div>
+            </div>
+        </div>
+
+        <div class="row new">
+            <div><div class="row-num purple">8d</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Send tx to self <span class="row-badge new">client</span></div>
+                <div class="row-desc">Client sends a transaction targeting its own address with the authorization list. The client EOA temporarily runs <code>FeedbackGateway</code> bytecode via the delegation. Client pays gas directly (no relayer):<br><code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(registry, params) }</code></div>
+            </div>
+        </div>
+
+        <div class="row new">
+            <div><div class="row-num purple">8e</div></div>
+            <div class="row-content">
+                <div class="row-arrow">FeedbackGateway executes <span class="row-badge new">on-chain</span></div>
+                <div class="row-desc">Inside <code>submitFeedback</code>, <code>msg.sender = client</code> (the EOA). The contract:<br>
+                1. Verifies <code>commitments[agentId][hash(agentId, reqHash, txHash)] == true</code><br>
+                2. Marks <code>usedSettlements[txHash] = true</code> (one settlement = one verified feedback)<br>
+                3. Calls <code>consumeInteractionHash(feedbackHash)</code> on the singleton dedup store (immutable self-reference)<br>
+                4. Calls <code>ReputationRegistry.giveFeedback(...)</code> — registry records <code>msg.sender = client</code> as author</div>
             </div>
         </div>
     </section>
