@@ -28,12 +28,12 @@ If step 2 reverts, the whole transaction reverts (including consume).
 
 | Field | Value |
 |-------|--------|
-| `from` | Facilitator (pays gas) or client |
-| `to` | Client EOA |
+| `from` | Client (pays own gas — no relayer) |
+| `to` | Client EOA (self-call with authorizationList) |
 | `authorizationList` | Client-signed delegation to `feedback_gateway` |
 | `data` | `submitFeedback(REPUTATION_REGISTRY, FeedbackParams)` |
 
-See [`main.py`](../main.py) `_sign_eip7702_authorization` and `_submit_feedback`. Gas: `eth_estimateGas` + 20% buffer for the tx limit; logs `gasUsed` vs limit after mining.
+See `src/client/app.py`. The client pays gas directly — no facilitator/relayer involved.
 
 ## Events: no gateway logs (use `NewFeedback` only)
 
