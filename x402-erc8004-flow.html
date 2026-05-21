@@ -94,8 +94,8 @@
         <div class="party client"><div class="icon">&#x1f9d1;&#x200d;&#x1f4bb;</div><div class="name">Client</div><div class="role">Pays, collects proof,<br>submits feedback</div><div class="meta">Fresh EOA</div></div>
         <div class="party server"><div class="icon">&#x1f5a5;&#xfe0f;</div><div class="name">Resource Server</div><div class="role">Serves /weather</div><div class="meta">:4021 FastAPI</div></div>
         <div class="party fac"><div class="icon">&#x2699;&#xfe0f;</div><div class="name">Facilitator</div><div class="role">Verifies &amp; settles</div><div class="meta">:4022 FastAPI</div></div>
-        <div class="party agent-eoa"><div class="icon">&#x1f916;</div><div class="name">Agent</div><div class="role">Receives payment,<br>signs proof,<br>builds reputation</div><div class="meta">Fresh EOA, agentId</div></div>
-        <div class="party chain"><div class="icon">&#x26c8;&#xfe0f;</div><div class="name">On-chain</div><div class="role">IdentityRegistry<br>ReputationRegistry<br>FeedbackGateway<br>Permit2</div><div class="meta">Anvil / Tenderly</div></div>
+        <div class="party agent-eoa"><div class="icon">&#x1f916;</div><div class="name">Agent</div><div class="role">Receives payment,<br>commits to request,<br>builds reputation</div><div class="meta">Fresh EOA, agentId</div></div>
+        <div class="party chain"><div class="icon">&#x26c8;&#xfe0f;</div><div class="name">On-chain</div><div class="role">IdentityRegistry<br>ReputationRegistry<br>FeedbackGateway<br>(commitments + dedup)<br>Permit2</div><div class="meta">Anvil / Tenderly</div></div>
     </div>
 
     <div class="delta">
@@ -113,14 +113,14 @@
         <div class="delta-box new">
             <h3>&#x2728; Our additions (ERC-8004 reputation layer)</h3>
             <ul>
-                <li><strong>ReputationMiddleware</strong> — outer ASGI middleware, signs <code>keccak256(agentId, req, resp)</code> with agent key</li>
-                <li><strong>X-Reputation-Proof header</strong> — ECDSA proof of interaction, attached to 200 responses</li>
-                <li><strong>Agent signing endpoint</strong> — <code>POST /sign-proof</code>, agent verifies settlement on-chain before signing</li>
-                <li><strong>FeedbackGateway.sol</strong> — on-chain dedup contract, SSTORE-first pattern</li>
-                <li><strong>On-chain reputation</strong> — client calls <code>ReputationRegistry.giveFeedback(agentId, 95, "x402")</code></li>
+                <li><strong>ReputationMiddleware</strong> — computes <code>reqHash = keccak256(reqBody)</code>, attaches to <code>erc-8004</code> extension in 402</li>
+                <li><strong><code>reqHash</code> in 402</strong> — agent advertises request commitment (tx hash unknown yet)</li>
+                <li><strong><code>X-Reputation-Commitment</code> header</strong> — convenience header with <code>hash(agentId, reqHash, respHash)</code></li>
+                <li><strong>FeedbackGateway.recordCommitment()</strong> — stores <code>commitments[agentId][hash(agentId, reqHash, txHash)]</code> after settlement</li>
+                <li><strong>Settlement dedup</strong> — <code>usedSettlements[txHash]</code> enforces one settlement = one verified feedback</li>
+                <li><strong>FeedbackGateway.submitFeedback()</strong> — verifies commitment + settlement dedup + hash dedup, delegates to ReputationRegistry</li>
+                <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (no facilitator needed)</li>
                 <li><strong>Agent registration</strong> — <code>IdentityRegistry.register()</code> mints agent NFT</li>
-                <li><strong>Fresh wallets</strong> — avoids EIP-7702 delegation on Anvil defaults</li>
-                <li><strong>Anvil clock sync</strong> — <code>_sync_anvil_clock()</code> fixes stale fork timestamps</li>
             </ul>
         </div>
     </div>
@@ -167,21 +167,21 @@
             <div><div class="row-num purple">6</div></div>
             <div class="row-content">
                 <div class="row-arrow">ReputationMiddleware (on Server) <span class="row-badge new">new</span></div>
-                <div class="row-desc">Intercepts 200 response. Signs <code>keccak256(agentId || reqBody || respBody)</code> with agent key. Attaches <code>X-Reputation-Proof</code> header.</div>
+                <div class="row-desc">Computes <code>reqHash = keccak256(reqBody)</code> on incoming request. Attaches to <code>erc-8004</code> extension in 402 response.</div>
             </div>
         </div>
         <div class="row new">
             <div><div class="row-num purple">7</div></div>
             <div class="row-content">
-                <div class="row-arrow">Client &rarr; Agent signing endpoint <span class="row-badge new">new</span></div>
-                <div class="row-desc"><code>POST /sign-proof</code> with settlement tx hash + data. Agent verifies on-chain, signs with own key (server never has it).</div>
+                <div class="row-arrow">Facilitator (or Agent) &rarr; On-chain <span class="row-badge new">new</span></div>
+                <div class="row-desc">After settlement: computes <code>commitment = keccak256(agentId, reqHash, settlementTxHash)</code>. Calls <code>FeedbackGateway.recordCommitment(agentId, commitment)</code>.</div>
             </div>
         </div>
         <div class="row new">
             <div><div class="row-num purple">8</div></div>
             <div class="row-content">
                 <div class="row-arrow">Client &rarr; On-chain <span class="row-badge new">new</span></div>
-                <div class="row-desc"><code>FeedbackGateway.markUsed(hash)</code> → <code>ReputationRegistry.giveFeedback(agentId, 95)</code> → <code>unmarkUsed</code> on failure.</div>
+                <div class="row-desc">Verifies <code>commitments[agentId][hash(agentId, reqHash, txHash)]</code> from chain. Calls <code>submitFeedback(registry, params)</code> via EIP-7702 — checks commitment + settlement dedup + hash dedup.</div>
             </div>
         </div>
     </section>
@@ -207,15 +207,19 @@
   5 |&lt;-- 200 + tx hash -|                |                |               |
     |                   |                |                |               |</span>
 <span class="new">  6 |                   |(RepMiddleware) |                |               |
-    |                   | signs proof    |                |               |
-    |&lt;-- X-Rep-Proof ---|                |                |               |
-    |                   |                |                |               |
-  7 |-- POST /sign-proof ------------------------------->|               |
-    |                   |                |                |(verifies tx)  |
-    |&lt;-- signed proof --|                |                |               |
-    |                   |                |                |               |
-  8 |------------------|----------------|----------------|-- markUsed -->| FeedbackGw
-    |                   |                |                |-- giveFdbk ->| ReputationR</span>
+     |                   | reqHash=keccak256               |               |
+     |&lt;-- 402 + reqHash -|                |                |               |
+     |                   |                |                |               |
+   7 |-------------------|- POST /settle ->|                |               |
+     |                   |                |-- recordCmmit -->| FeedbackGw  |
+     |                   |                |   (agentId,    |               |
+     |                   |                |    commitment) |               |
+     |                   |                |                |               |
+   8 |-- submitFeedback ->|                |                |               |
+     |   (via EIP-7702)  |                |-- verify ----->| FeedbackGw   |
+     |                   |                |   commitment   | (commitments) |
+     |                   |                |-- dedup ------>| (usedSettlmts)|
+     |                   |                |-- giveFdbk --->| ReputationR  |</span>
 
 <span class="dim">  Dim text = standard x402 (unchanged from SDK)</span>
 <span class="new">  Purple   = our ERC-8004 additions (new code)</span></div>
@@ -228,11 +232,11 @@
             <div class="arch-item"><span class="tag std">x402</span><h4>DAI (real)</h4><p>EIP-2612 token. Permit2 via x402 Proxy. Client pre-approves Permit2 contract.</p><div class="file">0x6B1754... (fork)</div></div>
             <div class="arch-item"><span class="tag std">x402</span><h4>PaymentMiddlewareASGI</h4><p>FastAPI middleware that intercepts PAYMENT-SIGNATURE, calls verify/settle. Core x402 flow.</p><div class="file">x402 SDK</div></div>
             <div class="arch-item"><span class="tag std">x402</span><h4>Facilitator (verify/settle)</h4><p>x402Facilitator + HTTP endpoints. Verifies signatures, simulates, settles on-chain.</p><div class="file">main.py (thin wrapper)</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>ReputationMiddleware</h4><p>Outer ASGI middleware. Signs proof with agent key after settlement.</p><div class="file">main.py</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>FeedbackGateway</h4><p>On-chain dedup contract. mapping(bytes32→bool). SSTORE-first.</p><div class="file">contracts/FeedbackGateway.sol</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>ReputationMiddleware</h4><p>Computes reqHash on incoming request, attaches to erc-8004 extension in 402.</p><div class="file">src/agent_server/app.py</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>FeedbackGateway</h4><p>On-chain contract: commitments mapping + settlement dedup + hash dedup.</p><div class="file">contracts/FeedbackGateway.sol</div></div>
             <div class="arch-item new"><span class="tag new">new</span><h4>Agent registration</h4><p>IdentityRegistry.register() mints agent NFT. Client discovers via tokenURI.</p><div class="file">ERC-8004 (real)</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>On-chain reputation</h4><p>ReputationRegistry stores feedback. Client calls giveFeedback() directly.</p><div class="file">ERC-8004 (real)</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>Anvil clock sync</h4><p>_sync_anvil_clock() advances stale fork block time to wall clock.</p><div class="file">main.py</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>On-chain reputation</h4><p>ReputationRegistry stores feedback. Client calls submitFeedback() via EIP-7702.</p><div class="file">ERC-8004 (real)</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>recordCommitment</h4><p>Facilitator (or agent) records hash(agentId, reqHash, txHash) after settlement.</p><div class="file">src/facilitator/app.py</div></div>
         </div>
     </section>
 
