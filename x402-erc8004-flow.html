@@ -65,7 +65,7 @@
 <body>
     <header>
         <h1>x402 x ERC-8004 Reputation Flow</h1>
-        <p>Two payment methods: USDC via EIP-3009 or DAI via Permit2. Fresh wallets, no EIP-7702 issues.</p>
+        <p>Two payment methods: USDC via EIP-3009 (real mainnet token) or DAI via Permit2. Anvil clock sync for stale forks.</p>
     </header>
 
     <div class="parties">
@@ -170,13 +170,14 @@
 
 
   Payment methods:
-  USDC: EIP-3009 transferWithAuthorization. Single signed message.
-        No prior approval needed. Facilitator executes the transfer directly.
+  USDC: EIP-3009 transferWithAuthorization on REAL mainnet USDC (0xA0b869...).
+        No prior approval needed. Facilitator funded via Tenderly fork state.
+        Anvil clock sync disabled: _sync_anvil_clock() advances stale block
+        timestamps to wall clock so validAfter checks pass.
 
   DAI:  Permit2 via x402 Permit2 Proxy (0x402085...).
         Client must approve Permit2 contract (0x0000...A3) for DAI upfront.
         Signs PermitWitnessTransferFrom. Proxy calls Permit2.permitTransferFrom.
-        x402 Permit2 Proxy enforces payment goes to witness.to (Agent EOA).
 
   Fresh wallets: Both client and agent generate fresh EOAs at runtime.
                  No EIP-7702 delegation issues. Funded by facilitator.</div>
@@ -185,14 +186,14 @@
     <section>
         <h2>Architecture</h2>
         <div class="arch">
-            <div class="arch-item"><h4>MockUSDC</h4><p>EIP-3009 token. transferWithAuthorization, no prior approval needed.</p><div class="file">contracts/MockUSDC.sol</div></div>
-            <div class="arch-item"><h4>DAI (real)</h4><p>EIP-2612 token. Uses Permit2 path via x402 Permit2 Proxy. Client pre-approves Permit2 contract.</p><div class="file">0x6B1754... (mainnet)</div></div>
+            <div class="arch-item"><h4>USDC (real)</h4><p>Mainnet USDC on fork via Tenderly. EIP-3009 transferWithAuthorization. No prior approval needed.</p><div class="file">0xA0b869... (mainnet fork)</div></div>
+            <div class="arch-item"><h4>DAI (real)</h4><p>EIP-2612 token. Uses Permit2 path via x402 Permit2 Proxy. Client pre-approves Permit2 contract.</p><div class="file">0x6B1754... (mainnet fork)</div></div>
             <div class="arch-item"><h4>FeedbackGateway</h4><p>On-chain dedup. mapping(bytes32&rarr;bool). SSTORE-first, unmark on failure.</p><div class="file">contracts/FeedbackGateway.sol</div></div>
             <div class="arch-item"><h4>ReputationMiddleware</h4><p>Runs on Agent's infra. Signs proof with Agent's own key.</p><div class="file">main.py</div></div>
             <div class="arch-item"><h4>IdentityRegistry</h4><p>ERC-721 agent registry. register() mints NFT.</p><div class="file">ERC-8004 (real)</div></div>
             <div class="arch-item"><h4>ReputationRegistry</h4><p>Stores feedback (value + valueDecimals).</p><div class="file">ERC-8004 (real)</div></div>
             <div class="arch-item"><h4>x402 SDK</h4><p>Coinbase SDK. Routes EIP-3009 vs Permit2 automatically.</p><div class="file">pip x402</div></div>
-            <div class="arch-item"><h4>Permit2 Proxy</h4><p>x402-specific proxy (0x402085...) that enforces witness.to=Agent EOA.</p><div class="file">mainnet fork</div></div>
+            <div class="arch-item"><h4>Anvil clock sync</h4><p>_sync_anvil_clock() advances stale fork timestamp to wall clock. EIP-3009 validAfter requires current time.</p><div class="file">main.py</div></div>
         </div>
     </section>
 
@@ -201,12 +202,13 @@
         <table>
             <thead><tr><th>Decision</th><th>Choice</th><th>Rationale</th></tr></thead>
             <tbody>
-                <tr><td>Token</td><td>USDC (Mock) + DAI (real)</td><td>USDC via EIP-3009 (no pre-approve). DAI via Permit2 (needs Permit2 approval). PAYMENT_TOKEN env var selects.</td></tr>
-                <tr><td>Agent key custody</td><td>Agent holds own key</td><td>Server never sees it. Agent runs signing endpoint separately.</td></tr>
-                <tr><td>Wallets</td><td>Fresh EOAs</td><td>Avoids EIP-7702 delegation on Anvil default accounts. Funded by facilitator.</td></tr>
+                <tr><td>USDC source</td><td>Real mainnet USDC (fork)</td><td>Facilitator funded via Tenderly. Transfers 50 USDC to client via ERC-20 transfer. MockUSDC removed.</td></tr>
+                <tr><td>Default token</td><td>USDC (EIP-3009)</td><td>PAYMENT_TOKEN env var selects usdc or dai. Default changed from dai to usdc.</td></tr>
+                <tr><td>Block timestamp</td><td>_sync_anvil_clock() on bootstrap</td><td>Stale fork timestamps cause FiatTokenV2: authorization is not yet valid. Advances to wall clock.</td></tr>
+                <tr><td>Agent key custody</td><td>Agent holds own key</td><td>Server never sees it.</td></tr>
+                <tr><td>Wallets</td><td>Fresh EOAs</td><td>Avoids EIP-7702 delegation on Anvil defaults.</td></tr>
                 <tr><td>Dedup</td><td>FeedbackGateway (on-chain)</td><td>Client can retry if facilitator censors.</td></tr>
-                <tr><td>DAI funding</td><td>Facilitator transfer</td><td>Facilitator funded via Tenderly. Transfers 100 DAI to client.</td></tr>
-                <tr><td>Permit2 deadline</td><td>1800s timeout</td><td>Prevents expiry during multi-step verify+settle flow.</td></tr>
+                <tr><td>DAI deadline</td><td>1800s timeout</td><td>Prevents expiry during multi-step flow.</td></tr>
             </tbody>
         </table>
     </section>
