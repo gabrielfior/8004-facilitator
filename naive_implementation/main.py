@@ -11,9 +11,10 @@ Prerequisites:
 
 Optional env:
   RPC_URL=http://127.0.0.1:8545
-  FACILITATOR_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80  # Anvil #0 (has USDC)
-  CLIENT_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d  # Anvil #1
+  FACILITATOR_PRIVATE_KEY=0xac0974...  # Anvil #0 (needs USDC on fork)
+  CLIENT_PRIVATE_KEY=<optional, fresh key funded with USDC>
   AGENT_PRIVATE_KEY=<optional, fresh key generated if unset>
+  PAYMENT_TOKEN=usdc  # or dai (Permit2)
 """
 
 from __future__ import annotations
@@ -104,11 +105,12 @@ class ReputationMiddleware(BaseHTTPMiddleware):
         headers["X-Reputation-Proof"] = proof
         return Response(content=resp_body, status_code=200, headers=headers, media_type=response.media_type)
 
-# Monkey-patch: add Ethereum mainnet config for MockUSDC + DAI
+# Ethereum mainnet (Anvil fork): real USDC + DAI
+MAINNET_USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 NETWORK_CONFIGS["eip155:1"] = {
     "chain_id": 1,
     "default_asset": {
-        "address": "0x0000000000000000000000000000000000000000",  # placeholder
+        "address": MAINNET_USDC_ADDRESS,
         "name": "USD Coin",
         "version": "2",
         "decimals": 6,
@@ -139,8 +141,6 @@ DEFAULT_FACILITATOR_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae7
 DEFAULT_CLIENT_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 # Agent gets a fresh key (Anvil defaults have EIP-7702 delegation on mainnet)
 
-# Deployed MockUSDC (EIP-3009 compatible, SDK-tested)
-USDC_ADDRESS = None  # Set after deployment
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
 PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
 
@@ -151,7 +151,7 @@ REPUTATION_REGISTRY = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
 PRICE_AMOUNT = "10000"  # $0.01 USDC (6 decimals)
 FUND_USDC = 50_000_000  # 50 USDC to fund the client
 FUND_DAI = 100 * 10**18  # 100 DAI (18 decimals)
-PAYMENT_TOKEN = os.getenv("PAYMENT_TOKEN", "dai").lower()  # "usdc" or "dai"
+PAYMENT_TOKEN = os.getenv("PAYMENT_TOKEN", "usdc").lower()  # "usdc" or "dai"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("naive_x402")
@@ -193,6 +193,21 @@ def _require_anvil(rpc_url: str) -> Web3:
         )
         sys.exit(1)
     return w3
+
+
+def _sync_anvil_clock(w3: Web3) -> None:
+    """Advance Anvil block timestamp to wall clock.
+
+    EIP-3009 authorizations use validAfter from the client's wall clock. A stale
+    fork (common when Anvil sits idle) causes FiatTokenV2: authorization is not yet valid.
+    """
+    target = int(time.time()) + 1
+    latest_ts = w3.eth.get_block("latest")["timestamp"]
+    if latest_ts >= target:
+        return
+    logger.info("Advancing Anvil block time %s -> %s", latest_ts, target)
+    w3.provider.make_request("anvil_setNextBlockTimestamp", [target])
+    w3.provider.make_request("evm_mine", [])
 
 
 def _generate_fresh_key() -> Account:
@@ -258,6 +273,7 @@ def bootstrap() -> LocalSetup:
     agent_key = os.getenv("AGENT_PRIVATE_KEY")
 
     w3 = _require_anvil(RPC_URL)
+    _sync_anvil_clock(w3)
     facilitator_account = Account.from_key(facilitator_key)
 
     # Client gets a fresh key (Anvil defaults have EIP-7702 delegation on mainnet)
@@ -289,32 +305,15 @@ def bootstrap() -> LocalSetup:
         })
         w3.eth.wait_for_transaction_receipt(tx_hash)
 
-    # Deploy MockUSDC (EIP-3009 compatible, SDK-tested on this chain)
-    logger.info("Deploying MockUSDC...")
-    artifact_path = ROOT / "out" / "MockUSDC.sol" / "MockUSDC.json"
-    if not artifact_path.exists():
-        raise RuntimeError(f"Missing {artifact_path}. Run: cd {ROOT} && forge build --via-ir --optimize --optimizer-runs 200")
-    artifact = json.loads(artifact_path.read_text())
-    mock_usdc_contract = w3.eth.contract(abi=artifact["abi"], bytecode=artifact["bytecode"]["object"])
-    tx = mock_usdc_contract.constructor("USD Coin", "2", 6).build_transaction({
-        "from": facilitator_account.address,
-        "nonce": w3.eth.get_transaction_count(facilitator_account.address),
-        "gas": 2_000_000,
-        "maxFeePerGas": w3.to_wei(2, "gwei"),
-        "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-        "chainId": w3.eth.chain_id,
-    })
-    signed = facilitator_account.sign_transaction(tx)
-    receipt = w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(signed.raw_transaction))
-    usdc_address = Web3.to_checksum_address(receipt.contractAddress)
-    NETWORK_CONFIGS["eip155:1"]["default_asset"]["address"] = usdc_address
-    logger.info("Deployed MockUSDC at %s", usdc_address)
-
-    # Mint USDC to client
-    mock_usdc = w3.eth.contract(address=usdc_address, abi=[
-        {"inputs":[{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],"name":"mint","outputs":[],"stateMutability":"nonpayable","type":"function"}
-    ])
-    tx = mock_usdc.functions.mint(client_account.address, FUND_USDC).build_transaction({
+    # Fund client with mainnet USDC from facilitator (fork state)
+    usdc_address = Web3.to_checksum_address(MAINNET_USDC_ADDRESS)
+    erc20_transfer_abi = [
+        {"inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
+        {"inputs":[{"name":"who","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    ]
+    usdc = w3.eth.contract(address=usdc_address, abi=erc20_transfer_abi)
+    logger.info("Funding client with %s USDC from facilitator...", FUND_USDC / 10**6)
+    tx = usdc.functions.transfer(client_account.address, FUND_USDC).build_transaction({
         "from": facilitator_account.address,
         "nonce": w3.eth.get_transaction_count(facilitator_account.address),
         "gas": 100_000,
@@ -324,7 +323,8 @@ def bootstrap() -> LocalSetup:
     })
     signed = facilitator_account.sign_transaction(tx)
     w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(signed.raw_transaction))
-    logger.info("Minted 50 MockUSDC to client %s", client_account.address)
+    usdc_bal = usdc.functions.balanceOf(client_account.address).call()
+    logger.info("Client USDC balance: %s", usdc_bal)
 
     # Fund client with DAI from facilitator (who has 1000 DAI via Tenderly)
     logger.info("Funding client with 100 DAI from facilitator...")
@@ -638,10 +638,13 @@ async def run_paying_client(setup: LocalSetup) -> None:
         transport=x402_httpx_transport(client),
     ) as http:
         response = await http.get("/weather")
-        body = response.json()
 
     print("\n--- Payment result ---")
     print(f"HTTP {response.status_code}")
+    if response.status_code != 200:
+        print(response.text[:500] if response.text else "(empty body)")
+        return
+    body = response.json()
     print(json.dumps(body, indent=2))
     proof = response.headers.get("X-Reputation-Proof", "")
     if proof:
@@ -680,7 +683,7 @@ async def main_async() -> None:
     print(f"  Facilitator:      {setup.facilitator_account.address}  -> :{FACILITATOR_PORT}")
     print(f"  Agent (pay):      {setup.agent_account.address}")
     print(f"  Client:           {setup.client_account.address}")
-    print(f"  Tokens:           USDC (EIP-3009) + DAI (Permit2)")
+    print(f"  Tokens:           USDC (mainnet EIP-3009) + DAI (Permit2)")
     print()
 
     facilitator_app = create_facilitator_app(setup)

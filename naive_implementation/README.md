@@ -12,25 +12,24 @@ Single-process demo of the [x402 Python SDK](https://github.com/coinbase/x402/tr
 **Terminal 1 — start Anvil:**
 
 ```bash
-anvil
+anvil --fork-url <RPC_URL> --chain-id 1
 ```
 
 **Terminal 2 — run the demo:**
 
 ```bash
 cd naive_implementation
-forge build   # once: compiles contracts/MockUSDC.sol (EIP-3009)
+forge build   # once: compiles contracts/FeedbackGateway.sol
 uv sync
 uv run python main.py
 ```
 
 The script will:
 
-1. Deploy `MockUSDC` (EIP-3009) on Anvil
-2. Mint USDC to the client account
-3. Start the facilitator on `http://127.0.0.1:4022`
-4. Start the resource server on `http://127.0.0.1:4021`
-5. Pay for `GET /weather` and print the settlement tx hash
+1. Transfer mainnet USDC to the client account (from facilitator on the fork)
+2. Start the facilitator on `http://127.0.0.1:4022`
+3. Start the resource server on `http://127.0.0.1:4021`
+4. Pay for `GET /weather` with USDC (EIP-3009) and print the settlement tx hash
 
 ## Optional environment
 
@@ -38,7 +37,8 @@ The script will:
 |----------|---------|
 | `RPC_URL` | `http://127.0.0.1:8545` |
 | `FACILITATOR_PRIVATE_KEY` | Anvil account #0 |
-| `CLIENT_PRIVATE_KEY` | Anvil account #1 |
+| `CLIENT_PRIVATE_KEY` | fresh key (funded by facilitator) |
+| `PAYMENT_TOKEN` | `usdc` (mainnet USDC) or `dai` |
 | `AGENT_PRIVATE_KEY` | Anvil account #2 |
 | `FACILITATOR_PORT` | `4022` |
 | `SERVER_PORT` | `4021` |
