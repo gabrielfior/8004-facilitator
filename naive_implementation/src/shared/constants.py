@@ -34,5 +34,37 @@ PAYMENT_TOKEN = os.getenv("PAYMENT_TOKEN", "usdc").lower()  # "usdc" or "dai"
 
 ERC8004_CONTRACTS_ROOT = ROOT / "lib" / "erc-8004-contracts"
 
+from x402.mechanisms.evm.constants import NETWORK_CONFIGS
 from x402.schemas import Network
-NETWORK: Network = "eip155:1"
+
+# Read from env (set by setup.py or manually). Defaults to eip155:1 for Anvil.
+NETWORK_ID = os.getenv("NETWORK_ID", "eip155:1")
+NETWORK: Network = NETWORK_ID
+
+
+def ensure_network_config() -> str:
+    """Register the Mainnet USDC/DAI config for the current NETWORK_ID if not already set.
+    Must be called before register_exact_evm_facilitator or register_exact_evm_client.
+    """
+    if NETWORK_ID not in NETWORK_CONFIGS:
+        chain_id = int(NETWORK_ID.split(":")[1])
+        NETWORK_CONFIGS[NETWORK_ID] = {
+            "chain_id": chain_id,
+            "default_asset": {
+                "address": MAINNET_USDC_ADDRESS,
+                "name": "USD Coin",
+                "version": "2",
+                "decimals": 6,
+            },
+            "supported_assets": {
+                "DAI": {
+                    "address": DAI_ADDRESS,
+                    "name": "Dai Stablecoin",
+                    "version": "1",
+                    "decimals": 18,
+                    "asset_transfer_method": "permit2",
+                    "supports_eip2612": True,
+                },
+            },
+        }
+    return NETWORK_ID

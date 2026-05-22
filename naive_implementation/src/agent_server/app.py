@@ -19,6 +19,7 @@ from src.shared.constants import (
     DAI_ADDRESS,
     PRICE_AMOUNT,
     PAYMENT_TOKEN,
+    ensure_network_config,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -26,6 +27,7 @@ logger = logging.getLogger("agent_server")
 
 
 def create_app(agent_address: str) -> FastAPI:
+    ensure_network_config()
     facilitator_client = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
     resource_server = x402ResourceServer(facilitator_client)
     resource_server.register(NETWORK, ExactEvmServerScheme())

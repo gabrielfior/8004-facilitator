@@ -21,6 +21,7 @@ from src.shared.constants import (
     NETWORK,
     DEFAULT_FACILITATOR_KEY,
     ROOT,
+    ensure_network_config,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -53,6 +54,8 @@ def create_app(
         address=Web3.to_checksum_address(feedback_gateway),
         abi=gateway_artifact["abi"],
     )
+
+    ensure_network_config()
 
     evm_signer = FacilitatorWeb3Signer(
         private_key=facilitator_key,

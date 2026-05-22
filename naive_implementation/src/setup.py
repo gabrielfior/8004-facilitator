@@ -37,6 +37,7 @@ logger = logging.getLogger("setup")
 class LocalSetup:
     rpc_url: str
     network: str
+    chain_id: int
     usdc_address: str
     dai_address: str
     feedback_gateway: str
@@ -48,7 +49,7 @@ class LocalSetup:
 
 def require_anvil(rpc_url: str) -> Web3:
     try:
-        w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 3}))
+        w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
         if not w3.is_connected():
             raise ConnectionError("RPC not reachable")
         chain_id = w3.eth.chain_id
@@ -61,10 +62,8 @@ def require_anvil(rpc_url: str) -> Web3:
             f"(tried RPC_URL={rpc_url}: {exc})\n"
         )
         sys.exit(1)
-    if chain_id != 1:
-        print(f"\nExpected chain id 1 (mainnet fork), got {chain_id}.\nStart Anvil with --chain-id 1.\n")
-        sys.exit(1)
-    return w3
+    print(f"Connected to chain ID {chain_id} at {rpc_url}")
+    return w3, chain_id
 
 
 def sync_anvil_clock(w3: Web3) -> None:
@@ -150,7 +149,7 @@ def bootstrap() -> LocalSetup:
     client_key = os.getenv("CLIENT_PRIVATE_KEY")
     agent_key = os.getenv("AGENT_PRIVATE_KEY")
 
-    w3 = require_anvil(RPC_URL)
+    w3, chain_id = require_anvil(RPC_URL)
     sync_anvil_clock(w3)
     facilitator_account = Account.from_key(facilitator_key)
 
@@ -242,7 +241,8 @@ def bootstrap() -> LocalSetup:
 
     return LocalSetup(
         rpc_url=RPC_URL,
-        network=NETWORK,
+        network=f"eip155:{chain_id}",
+        chain_id=chain_id,
         usdc_address=usdc_address,
         dai_address=dai_addr,
         feedback_gateway=feedback_gateway,
@@ -278,6 +278,8 @@ if __name__ == "__main__":
 
     env_path = Path("/tmp/setup.env")
     env_path.write_text(
+        f"RPC_URL={setup.rpc_url}\n"
+        f"NETWORK_ID={setup.network}\n"
         f"FEEDBACK_GATEWAY={setup.feedback_gateway}\n"
         f"AGENT_ID={setup.agent_id}\n"
         f"AGENT_ADDRESS={setup.agent_account.address}\n"
