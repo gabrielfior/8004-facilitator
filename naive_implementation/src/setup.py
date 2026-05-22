@@ -275,3 +275,13 @@ if __name__ == "__main__":
     print(f"  Facilitator:      {setup.facilitator_account.address}")
     print(f"  Agent (pay):      {setup.agent_account.address}")
     print(f"  Client:           {setup.client_account.address}")
+
+    env_path = Path("/tmp/setup.env")
+    env_path.write_text(
+        f"FEEDBACK_GATEWAY={setup.feedback_gateway}\n"
+        f"AGENT_ID={setup.agent_id}\n"
+        f"AGENT_ADDRESS={setup.agent_account.address}\n"
+        f"FACILITATOR_ADDRESS={setup.facilitator_account.address}\n"
+        f"CLIENT_KEY={setup.client_account.key.hex()}\n"
+    )
+    print(f"\nWrote {env_path}")

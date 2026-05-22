@@ -3,7 +3,7 @@ import os
 from src.shared.constants import DEFAULT_CLIENT_KEY
 
 if __name__ == "__main__":
-    client_key = os.getenv("CLIENT_PRIVATE_KEY", DEFAULT_CLIENT_KEY)
+    client_key = os.getenv("CLIENT_PRIVATE_KEY") or os.getenv("CLIENT_KEY") or DEFAULT_CLIENT_KEY
     gateway = os.getenv("FEEDBACK_GATEWAY")
     agent_id_str = os.getenv("AGENT_ID")
     if not gateway or not agent_id_str:
