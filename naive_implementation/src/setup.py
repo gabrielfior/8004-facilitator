@@ -199,7 +199,29 @@ def bootstrap() -> LocalSetup:
     dai_addr = Web3.to_checksum_address(DAI_ADDRESS)
 
     # Fund client with USDC and DAI if the contracts exist (forked Anvil / Tenderly)
-    _tenderly_set_erc20(w3, usdc_address, client_account.address, FUND_USDC)
+    usdc_funded = _tenderly_set_erc20(w3, usdc_address, client_account.address, FUND_USDC)
+    if not usdc_funded:
+        # Try anvil_impersonateAccount to send USDC from a known whale
+        # (Only works on forked Anvil where the whale has USDC balance)
+        try:
+            whale = "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503"  # Binance USDC whale
+            w3.provider.make_request("anvil_impersonateAccount", [whale])
+            usdc = w3.eth.contract(
+                address=usdc_address,
+                abi=[{"inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}],
+            )
+            tx = usdc.functions.transfer(client_account.address, FUND_USDC).build_transaction({
+                "from": whale,
+                "nonce": w3.eth.get_transaction_count(whale),
+                "gas": 100_000,
+                "gasPrice": w3.to_wei(1, "gwei"),
+                "chainId": chain_id,
+            })
+            w3.eth.send_transaction(tx)
+            w3.provider.make_request("anvil_stopImpersonatingAccount", [whale])
+            logger.info("Funded client with %s USDC via impersonation", FUND_USDC / 10**6)
+        except Exception as e:
+            logger.info("Could not fund USDC via impersonation: %s", e)
     try:
         usdc_bal = w3.eth.contract(
             address=usdc_address,
@@ -209,7 +231,7 @@ def bootstrap() -> LocalSetup:
     except Exception:
         logger.info("USDC not available on this chain — skipping USDC balance check")
 
-    _tenderly_set_erc20(w3, dai_addr, client_account.address, FUND_DAI)
+    dai_funded = _tenderly_set_erc20(w3, dai_addr, client_account.address, FUND_DAI)
     try:
         dai_bal = w3.eth.contract(
             address=dai_addr,
@@ -237,6 +259,34 @@ def bootstrap() -> LocalSetup:
     logger.info("Approved Permit2 for client's DAI")
 
     feedback_gateway = deploy_feedback_gateway(w3, facilitator_key)
+
+    # Deploy MockRegistry for local testing (replaces mainnet ReputationRegistry)
+    try:
+        mock_artifact_path = ROOT / "out" / "MockRegistry.sol" / "MockRegistry.json"
+        if mock_artifact_path.exists():
+            mock_artifact = json.loads(mock_artifact_path.read_text())
+            mock_registry = w3.eth.contract(
+                abi=mock_artifact["abi"],
+                bytecode=mock_artifact["bytecode"]["object"],
+            )
+            tx = mock_registry.constructor().build_transaction({
+                "from": facilitator_account.address,
+                "nonce": w3.eth.get_transaction_count(facilitator_account.address),
+                "gas": 200_000,
+                "gasPrice": w3.to_wei(2, "gwei"),
+                "chainId": chain_id,
+            })
+            signed = facilitator_account.sign_transaction(tx)
+            receipt = w3.eth.wait_for_transaction_receipt(
+                w3.eth.send_raw_transaction(signed.raw_transaction)
+            )
+            mock_registry_addr = Web3.to_checksum_address(receipt.contractAddress)
+            logger.info("Deployed MockRegistry at %s", mock_registry_addr)
+        else:
+            mock_registry_addr = REPUTATION_REGISTRY
+    except Exception as exc:
+        logger.warning("MockRegistry deployment failed: %s", exc)
+        mock_registry_addr = REPUTATION_REGISTRY
 
     try:
         agent_id = register_agent(w3, agent_account.key.hex())
@@ -291,5 +341,6 @@ if __name__ == "__main__":
         f"AGENT_ADDRESS={setup.agent_account.address}\n"
         f"FACILITATOR_ADDRESS={setup.facilitator_account.address}\n"
         f"CLIENT_KEY={setup.client_account.key.hex()}\n"
+        f"REPUTATION_REGISTRY={mock_registry_addr}\n"
     )
     print(f"\nWrote {env_path}")

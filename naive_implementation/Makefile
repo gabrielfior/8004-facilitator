@@ -38,6 +38,7 @@ start-facilitator:
 	RPC_URL=$(RPC_URL) \
 	NETWORK_ID=$(call read_env,NETWORK_ID) \
 	FEEDBACK_GATEWAY=$(call read_env,FEEDBACK_GATEWAY) \
+	REPUTATION_REGISTRY=$(call read_env,REPUTATION_REGISTRY) \
 	uv run python -m src.facilitator &>/tmp/facilitator.log &
 	@sleep 1
 	@echo "Facilitator started (PID: $$!)"
@@ -46,6 +47,7 @@ start-agent-server:
 	RPC_URL=$(RPC_URL) \
 	NETWORK_ID=$(call read_env,NETWORK_ID) \
 	AGENT_ADDRESS=$(call read_env,AGENT_ADDRESS) \
+	REPUTATION_REGISTRY=$(call read_env,REPUTATION_REGISTRY) \
 	uv run python -m src.agent_server &>/tmp/agent_server.log &
 	@sleep 1
 	@echo "Agent server started (PID: $$!)"
@@ -57,6 +59,7 @@ run-client:
 	CLIENT_PRIVATE_KEY=$(call read_env,CLIENT_KEY) \
 	FEEDBACK_GATEWAY=$(call read_env,FEEDBACK_GATEWAY) \
 	AGENT_ID=$(call read_env,AGENT_ID) \
+	REPUTATION_REGISTRY=$(call read_env,REPUTATION_REGISTRY) \
 	uv run python -m src.client
 
 clean:
