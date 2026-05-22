@@ -45,6 +45,7 @@ class LocalSetup:
     facilitator_account: Account
     client_account: Account
     agent_account: Account
+    mock_registry: str = ""
 
 
 def require_anvil(rpc_url: str) -> Web3:
@@ -158,12 +159,14 @@ def _tenderly_set_balance(w3: Web3, address: str, amount_wei: int) -> bool:
         return False
 
 
-def _tenderly_set_erc20(w3: Web3, token: str, address: str, amount: int) -> bool:
-    try:
-        w3.provider.make_request("tenderly_setErc20Balance", [token, address, hex(amount)])
-        return True
-    except Exception:
-        return False
+def _set_erc20_balance(w3: Web3, token: str, address: str, amount: int) -> bool:
+    for method in ("tenderly_setErc20Balance", "anvil_setErc20Balance"):
+        try:
+            w3.provider.make_request(method, [token, address, hex(amount)])
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def bootstrap() -> LocalSetup:
@@ -199,29 +202,7 @@ def bootstrap() -> LocalSetup:
     dai_addr = Web3.to_checksum_address(DAI_ADDRESS)
 
     # Fund client with USDC and DAI if the contracts exist (forked Anvil / Tenderly)
-    usdc_funded = _tenderly_set_erc20(w3, usdc_address, client_account.address, FUND_USDC)
-    if not usdc_funded:
-        # Try anvil_impersonateAccount to send USDC from a known whale
-        # (Only works on forked Anvil where the whale has USDC balance)
-        try:
-            whale = "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503"  # Binance USDC whale
-            w3.provider.make_request("anvil_impersonateAccount", [whale])
-            usdc = w3.eth.contract(
-                address=usdc_address,
-                abi=[{"inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}],
-            )
-            tx = usdc.functions.transfer(client_account.address, FUND_USDC).build_transaction({
-                "from": whale,
-                "nonce": w3.eth.get_transaction_count(whale),
-                "gas": 100_000,
-                "gasPrice": w3.to_wei(1, "gwei"),
-                "chainId": chain_id,
-            })
-            w3.eth.send_transaction(tx)
-            w3.provider.make_request("anvil_stopImpersonatingAccount", [whale])
-            logger.info("Funded client with %s USDC via impersonation", FUND_USDC / 10**6)
-        except Exception as e:
-            logger.info("Could not fund USDC via impersonation: %s", e)
+    usdc_funded = _set_erc20_balance(w3, usdc_address, client_account.address, FUND_USDC)
     try:
         usdc_bal = w3.eth.contract(
             address=usdc_address,
@@ -231,7 +212,7 @@ def bootstrap() -> LocalSetup:
     except Exception:
         logger.info("USDC not available on this chain — skipping USDC balance check")
 
-    dai_funded = _tenderly_set_erc20(w3, dai_addr, client_account.address, FUND_DAI)
+    dai_funded = _set_erc20_balance(w3, dai_addr, client_account.address, FUND_DAI)
     try:
         dai_bal = w3.eth.contract(
             address=dai_addr,
@@ -306,6 +287,7 @@ def bootstrap() -> LocalSetup:
         facilitator_account=facilitator_account,
         client_account=client_account,
         agent_account=agent_account,
+        mock_registry=mock_registry_addr,
     )
 
 
@@ -341,6 +323,6 @@ if __name__ == "__main__":
         f"AGENT_ADDRESS={setup.agent_account.address}\n"
         f"FACILITATOR_ADDRESS={setup.facilitator_account.address}\n"
         f"CLIENT_KEY={setup.client_account.key.hex()}\n"
-        f"REPUTATION_REGISTRY={mock_registry_addr}\n"
+        f"REPUTATION_REGISTRY={setup.mock_registry}\n"
     )
     print(f"\nWrote {env_path}")
