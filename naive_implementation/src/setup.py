@@ -144,6 +144,28 @@ def register_agent(w3: Web3, agent_key: str) -> int:
     return agent_id
 
 
+def _tenderly_set_balance(w3: Web3, address: str, amount_wei: int) -> bool:
+    for method in ("tenderly_setBalance", "anvil_setBalance"):
+        try:
+            w3.provider.make_request(method, [address, hex(amount_wei)])
+            return True
+        except Exception:
+            continue
+    try:
+        w3.provider.make_request("eth_faucet", [address])
+        return True
+    except Exception:
+        return False
+
+
+def _tenderly_set_erc20(w3: Web3, token: str, address: str, amount: int) -> bool:
+    try:
+        w3.provider.make_request("tenderly_setErc20Balance", [token, address, hex(amount)])
+        return True
+    except Exception:
+        return False
+
+
 def bootstrap() -> LocalSetup:
     facilitator_key = os.getenv("FACILITATOR_PRIVATE_KEY", DEFAULT_FACILITATOR_KEY)
     client_key = os.getenv("CLIENT_PRIVATE_KEY")
@@ -165,56 +187,33 @@ def bootstrap() -> LocalSetup:
     else:
         agent_account = generate_fresh_key()
 
-    for acct in [client_account, agent_account]:
-        logger.info("Funding %s with 10 ETH", acct.address)
-        tx_hash = w3.eth.send_transaction({
-            "from": facilitator_account.address,
-            "to": acct.address,
-            "value": w3.to_wei(10, "ether"),
-            "gas": 21_000,
-            "maxFeePerGas": w3.to_wei(2, "gwei"),
-            "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-            "chainId": w3.eth.chain_id,
-            "nonce": w3.eth.get_transaction_count(facilitator_account.address),
-        })
-        w3.eth.wait_for_transaction_receipt(tx_hash)
+    # Fund facilitator, client, and agent with ETH via RPC methods
+    eth_per_addr = w3.to_wei(20, "ether")
+    for acct in [facilitator_account, client_account, agent_account]:
+        bal = w3.eth.get_balance(acct.address)
+        if bal < eth_per_addr:
+            _tenderly_set_balance(w3, acct.address, eth_per_addr)
+            logger.info("Funded %s with %s ETH", acct.address[:12], w3.from_wei(eth_per_addr, "ether"))
 
     usdc_address = Web3.to_checksum_address(MAINNET_USDC_ADDRESS)
-    erc20_abi = [
-        {"inputs": [{"name": "to", "type": "address"}, {"name": "value", "type": "uint256"}], "name": "transfer", "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
-        {"inputs": [{"name": "who", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
-    ]
-    usdc = w3.eth.contract(address=usdc_address, abi=erc20_abi)
-    logger.info("Funding client with %s USDC from facilitator...", FUND_USDC / 10**6)
-    tx = usdc.functions.transfer(client_account.address, FUND_USDC).build_transaction({
-        "from": facilitator_account.address,
-        "nonce": w3.eth.get_transaction_count(facilitator_account.address),
-        "gas": 100_000,
-        "maxFeePerGas": w3.to_wei(2, "gwei"),
-        "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-        "chainId": w3.eth.chain_id,
-    })
-    signed = facilitator_account.sign_transaction(tx)
-    w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(signed.raw_transaction))
-    usdc_bal = usdc.functions.balanceOf(client_account.address).call()
+    dai_addr = Web3.to_checksum_address(DAI_ADDRESS)
+
+    # Fund client with USDC and DAI via Tenderly RPC methods
+    _tenderly_set_erc20(w3, usdc_address, client_account.address, FUND_USDC)
+    usdc_bal = w3.eth.contract(
+        address=usdc_address,
+        abi=[{"inputs": [{"name": "who", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}],
+    ).functions.balanceOf(client_account.address).call()
     logger.info("Client USDC balance: %s", usdc_bal)
 
-    logger.info("Funding client with 100 DAI from facilitator...")
-    dai_addr = Web3.to_checksum_address(DAI_ADDRESS)
-    dai = w3.eth.contract(address=dai_addr, abi=[
-        {"inputs": [{"name": "to", "type": "address"}, {"name": "value", "type": "uint256"}], "name": "transfer", "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
-    ])
-    tx = dai.functions.transfer(client_account.address, FUND_DAI).build_transaction({
-        "from": facilitator_account.address,
-        "nonce": w3.eth.get_transaction_count(facilitator_account.address),
-        "gas": 100_000,
-        "maxFeePerGas": w3.to_wei(2, "gwei"),
-        "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-        "chainId": w3.eth.chain_id,
-    })
-    signed = facilitator_account.sign_transaction(tx)
-    w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(signed.raw_transaction))
+    _tenderly_set_erc20(w3, dai_addr, client_account.address, FUND_DAI)
+    dai_bal = w3.eth.contract(
+        address=dai_addr,
+        abi=[{"inputs": [{"name": "who", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}],
+    ).functions.balanceOf(client_account.address).call()
+    logger.info("Client DAI balance: %s", dai_bal)
 
+    # Approve Permit2 for client's DAI
     permit2_addr = Web3.to_checksum_address(PERMIT2_ADDRESS)
     dai = w3.eth.contract(address=dai_addr, abi=[
         {"inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
@@ -233,11 +232,6 @@ def bootstrap() -> LocalSetup:
 
     feedback_gateway = deploy_feedback_gateway(w3, facilitator_key)
     agent_id = register_agent(w3, agent_account.key.hex())
-
-    dai_bal = w3.eth.contract(address=dai_addr, abi=[
-        {"inputs": [{"name": "who", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
-    ]).functions.balanceOf(client_account.address).call()
-    logger.info("Client DAI balance: %s", dai_bal)
 
     return LocalSetup(
         rpc_url=RPC_URL,
