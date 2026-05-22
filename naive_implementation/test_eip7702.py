@@ -4,38 +4,64 @@ Deploys a small SenderChecker contract, signs an EIP-7702 authorization
 delegating a test EOA to that contract, then sends a self-call.
 If EIP-7702 works, the event's `caller` will be the test EOA.
 If not, the tx succeeds silently (no code at EOA) and nothing is emitted.
+
+Works with:
+  - Anvil (uses pre-funded Anvil #0 as deployer)
+  - Tenderly (uses tenderly_setBalance / anvil_setBalance)
+  - Any RPC with anvil_setBalance support
+
+Usage:
+  RPC_URL=http://127.0.0.1:8545 uv run python test_eip7702.py
 """
 
 from __future__ import annotations
 
-import json
 import os
-import sys
-from pathlib import Path
 
 from eth_account import Account
 from web3 import Web3
 
+# Anvil #0 default key — has ETH on any Anvil fork
+ANVIL_DEV_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 RPC_URL = os.getenv("RPC_URL", "http://127.0.0.1:8545")
+
+
+def _fund_account(w3: Web3, address: str) -> None:
+    """Fund an account using available methods."""
+    for method in ("anvil_setBalance", "tenderly_setBalance"):
+        try:
+            w3.provider.make_request(method, [address, hex(10**19)])
+            return
+        except Exception:
+            continue
+    dev = Account.from_key(ANVIL_DEV_KEY)
+    dev_nonce = w3.eth.get_transaction_count(dev.address)
+    try:
+        w3.eth.send_transaction({
+            "from": dev.address,
+            "to": address,
+            "value": w3.to_wei(10, "ether"),
+            "gas": 21_000,
+            "gasPrice": w3.to_wei(1, "gwei"),
+            "chainId": w3.eth.chain_id,
+            "nonce": dev_nonce,
+        })
+    except Exception:
+        pass
 
 
 def main() -> None:
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
-    deployer = Account.create()
     chain_id = w3.eth.chain_id
 
     print(f"RPC:        {RPC_URL}")
     print(f"Chain ID:   {chain_id}")
     print()
 
-    # Fund deployer via RPC methods
-    for method in ("tenderly_setBalance", "anvil_setBalance"):
-        try:
-            w3.provider.make_request(method, [deployer.address, hex(10**19)])
-            print(f"Funded {deployer.address[:12]}... via {method}")
-            break
-        except Exception:
-            continue
+    # Use Anvil #0 as deployer (already funded on Anvil forks)
+    deployer = Account.from_key(ANVIL_DEV_KEY)
+    deployer_bal = w3.eth.get_balance(deployer.address)
+    print(f"Deployer:   {deployer.address}  (balance: {w3.from_wei(deployer_bal, 'ether')} ETH)")
 
     # Deploy SenderChecker
     # Solidity:
@@ -56,8 +82,7 @@ def main() -> None:
         "from": deployer.address,
         "nonce": w3.eth.get_transaction_count(deployer.address),
         "gas": 200_000,
-        "maxFeePerGas": w3.to_wei(2, "gwei"),
-        "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
+        "gasPrice": w3.to_wei(1, "gwei"),
         "chainId": chain_id,
     })
     signed = deployer.sign_transaction(tx)
@@ -67,12 +92,7 @@ def main() -> None:
 
     # Create a fresh test EOA
     test_eoa = Account.create()
-    for method in ("tenderly_setBalance", "anvil_setBalance"):
-        try:
-            w3.provider.make_request(method, [test_eoa.address, hex(10**18)])
-            break
-        except Exception:
-            continue
+    _fund_account(w3, test_eoa.address)
 
     # Verify: before delegation, test EOA has no code
     code_before = w3.eth.get_code(test_eoa.address)
@@ -101,8 +121,7 @@ def main() -> None:
         "to": test_eoa.address,
         "nonce": auth_nonce,
         "value": 0,
-        "maxFeePerGas": w3.to_wei(2, "gwei"),
-        "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
+        "gasPrice": w3.to_wei(1, "gwei"),
         "gas": 100_000,
         "data": calldata,
         "authorizationList": [authorization],
