@@ -176,6 +176,23 @@ async def run_paying_client(
             w3.eth.send_raw_transaction(signed.raw_transaction)
         )
 
+    else:
+        tx = {
+            "chainId": w3.eth.chain_id,
+            "nonce": w3.eth.get_transaction_count(client_acct.address),
+            "to": gateway_addr,
+            "value": 0,
+            "gas": 100_000,
+            "gasPrice": w3.eth.gas_price,
+            "data": calldata,
+        }
+        mode = "direct"
+        logger.info("submitFeedback (mode=%s) gas=%s", mode, tx["gas"])
+        signed = Account.sign_transaction(tx, client_key)
+        receipt = w3.eth.wait_for_transaction_receipt(
+            w3.eth.send_raw_transaction(signed.raw_transaction)
+        )
+
     logger.info(
         "%s submitFeedback: status=%s gasUsed=%s",
         mode, receipt.status, receipt.gasUsed,

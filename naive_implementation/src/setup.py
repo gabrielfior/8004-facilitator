@@ -198,20 +198,26 @@ def bootstrap() -> LocalSetup:
     usdc_address = Web3.to_checksum_address(MAINNET_USDC_ADDRESS)
     dai_addr = Web3.to_checksum_address(DAI_ADDRESS)
 
-    # Fund client with USDC and DAI via Tenderly RPC methods
+    # Fund client with USDC and DAI if the contracts exist (forked Anvil / Tenderly)
     _tenderly_set_erc20(w3, usdc_address, client_account.address, FUND_USDC)
-    usdc_bal = w3.eth.contract(
-        address=usdc_address,
-        abi=[{"inputs": [{"name": "who", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}],
-    ).functions.balanceOf(client_account.address).call()
-    logger.info("Client USDC balance: %s", usdc_bal)
+    try:
+        usdc_bal = w3.eth.contract(
+            address=usdc_address,
+            abi=[{"inputs": [{"name": "who", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}],
+        ).functions.balanceOf(client_account.address).call()
+        logger.info("Client USDC balance: %s", usdc_bal)
+    except Exception:
+        logger.info("USDC not available on this chain — skipping USDC balance check")
 
     _tenderly_set_erc20(w3, dai_addr, client_account.address, FUND_DAI)
-    dai_bal = w3.eth.contract(
-        address=dai_addr,
-        abi=[{"inputs": [{"name": "who", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}],
-    ).functions.balanceOf(client_account.address).call()
-    logger.info("Client DAI balance: %s", dai_bal)
+    try:
+        dai_bal = w3.eth.contract(
+            address=dai_addr,
+            abi=[{"inputs": [{"name": "who", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}],
+        ).functions.balanceOf(client_account.address).call()
+        logger.info("Client DAI balance: %s", dai_bal)
+    except Exception:
+        logger.info("DAI not available on this chain — skipping DAI balance check")
 
     # Approve Permit2 for client's DAI
     permit2_addr = Web3.to_checksum_address(PERMIT2_ADDRESS)
@@ -231,7 +237,13 @@ def bootstrap() -> LocalSetup:
     logger.info("Approved Permit2 for client's DAI")
 
     feedback_gateway = deploy_feedback_gateway(w3, facilitator_key)
-    agent_id = register_agent(w3, agent_account.key.hex())
+
+    try:
+        agent_id = register_agent(w3, agent_account.key.hex())
+    except Exception as exc:
+        logger.warning("Agent registration failed (IdentityRegistry not deployed): %s", exc)
+        logger.warning("Using placeholder agentId=1 for local testing without ERC-8004 contracts")
+        agent_id = 1
 
     return LocalSetup(
         rpc_url=RPC_URL,

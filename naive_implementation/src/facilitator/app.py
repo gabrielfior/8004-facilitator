@@ -55,6 +55,17 @@ def create_app(
         abi=gateway_artifact["abi"],
     )
 
+    # Sync Anvil clock if running on Anvil (EIP-3009 validAfter needs wall clock time)
+    try:
+        latest_ts = w3.eth.get_block("latest")["timestamp"]
+        target = int(time.time()) + 1
+        if latest_ts < target:
+            w3.provider.make_request("anvil_setNextBlockTimestamp", [target])
+            w3.provider.make_request("evm_mine", [])
+            logger.info("Advanced Anvil block time %s -> %s", latest_ts, target)
+    except Exception:
+        pass  # Not on Anvil — do nothing
+
     ensure_network_config()
 
     evm_signer = FacilitatorWeb3Signer(
