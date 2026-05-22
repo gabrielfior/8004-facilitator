@@ -144,49 +144,36 @@ async def run_paying_client(
     gateway_addr = Web3.to_checksum_address(feedback_gateway)
 
     if EIP_7702_SUPPORTED:
-        import rlp
-        from eth_keys import keys
-
         tx_nonce = w3.eth.get_transaction_count(client_acct.address)
         base_fee = w3.eth.get_block("pending").get("baseFeePerGas", w3.eth.gas_price)
         max_priority = w3.to_wei(1, "gwei")
         max_fee = base_fee + max_priority
         gas_limit = 100_000
 
-        # Sign authorization (nonce = tx_nonce + 1 for self-call)
         authorization = Account.sign_authorization(
             {"chainId": w3.eth.chain_id, "address": gateway_addr, "nonce": tx_nonce + 1},
             client_key,
         )
 
-        calldata_bytes = bytes.fromhex(calldata[2:])
-        to_bytes = bytes.fromhex(client_acct.address[2:])
-        gateway_bytes = bytes.fromhex(gateway_addr[2:])
-
-        # Build type 0x04 EIP-7702 tx via RLP
-        placeholder = rlp.encode([
-            w3.eth.chain_id, tx_nonce,
-            max_priority, max_fee, gas_limit,
-            to_bytes, 0, calldata_bytes, [],
-            [[w3.eth.chain_id, gateway_bytes, tx_nonce + 1, authorization.y_parity, authorization.r, authorization.s]],
-            0, 0, 0,
-        ])
-        hash_to_sign = Web3.keccak(bytes([4]) + placeholder)
-        sig = keys.PrivateKey(client_acct.key).sign_msg_hash(hash_to_sign)
-        y_parity = sig.v if sig.v <= 1 else sig.v - 27
-
-        raw_tx = bytes([4]) + rlp.encode([
-            w3.eth.chain_id, tx_nonce,
-            max_priority, max_fee, gas_limit,
-            to_bytes, 0, calldata_bytes, [],
-            [[w3.eth.chain_id, gateway_bytes, tx_nonce + 1, authorization.y_parity, authorization.r, authorization.s]],
-            y_parity, sig.r, sig.s,
-        ])
+        tx = {
+            "type": 4,
+            "chainId": w3.eth.chain_id,
+            "nonce": tx_nonce,
+            "to": client_acct.address,
+            "value": 0,
+            "gas": gas_limit,
+            "maxFeePerGas": max_fee,
+            "maxPriorityFeePerGas": max_priority,
+            "data": calldata,
+            "accessList": (),
+            "authorizationList": [authorization],
+        }
 
         mode = "EIP-7702"
-        logger.info("submitFeedback (mode=%s) gas_limit=%s", mode, gas_limit)
+        logger.info("submitFeedback (mode=%s) gas=%s", mode, gas_limit)
+        signed = Account.sign_transaction(tx, client_key)
         receipt = w3.eth.wait_for_transaction_receipt(
-            w3.eth.send_raw_transaction(raw_tx)
+            w3.eth.send_raw_transaction(signed.raw_transaction)
         )
 
     logger.info(

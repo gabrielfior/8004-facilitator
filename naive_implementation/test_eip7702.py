@@ -20,12 +20,9 @@ import sys
 import time
 from pathlib import Path
 
-import rlp
 from dotenv import load_dotenv
 
 from eth_account import Account
-from eth_hash.auto import keccak as _keccak
-from eth_keys import keys
 from web3 import Web3
 
 # Load .env from repo root
@@ -34,9 +31,11 @@ if _env_path.exists():
     load_dotenv(_env_path)
 
 RPC_URL = os.getenv("RPC_URL", "http://127.0.0.1:8545")
+# On local Anvil, use the default dev key. On Sepolia, use the funded key from env.
+_LOCAL_ANVIL_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 SENDER_KEY_ENV = os.getenv(
     "PRIVATE_KEY_WITH_FUNDS_ON_SEPOLIA",
-    os.getenv("FACILITATOR_PRIVATE_KEY", ""),
+    os.getenv("FACILITATOR_PRIVATE_KEY", _LOCAL_ANVIL_KEY),
 )
 
 BYTECODE = "0x60808060405234601457608e90816100198239f35b5f80fdfe6004361015600b575f80fd5b5f803560e01c63919840ad14601e575f80fd5b346055578060031936011260555732337f664409437c3787d326d629bdd8447647a29c84a8d6814ee7d52cd931f84caf348380a380f35b80fdfea26469706673582212206b9bc15281073714332e2e6033be96afadb73e06dceb94f49f456316ce21c99964736f6c63430008140033"
@@ -62,6 +61,19 @@ def main() -> None:
     chain_id = w3.eth.chain_id
     sender_acct = Account.from_key(SENDER_KEY_ENV)
     sender_addr = sender_acct.address
+
+    # If the sender has 0 ETH (e.g. on Anvil with a non-funded key), try to fund it
+    if w3.eth.get_balance(sender_addr) == 0:
+        for method in ("anvil_setBalance", "tenderly_setBalance"):
+            try:
+                w3.provider.make_request(method, [sender_addr, hex(10**19)])
+                print(f"Funded {sender_addr[:12]}... via {method}")
+                break
+            except Exception:
+                continue
+        if w3.eth.get_balance(sender_addr) == 0:
+            print(f"ERROR: {sender_addr} has no ETH and could not be funded")
+            sys.exit(1)
 
     print(f"RPC:        {RPC_URL}")
     print(f"Chain ID:   {chain_id}")
@@ -93,7 +105,7 @@ def main() -> None:
     print(f"Code:       {len(w3.eth.get_code(test_eoa.address))} bytes")
     print()
 
-    # ---- Build raw EIP-7702 type 0x04 transaction using deployer nonce ----
+    # ---- Build EIP-7702 type 0x04 transaction using Account.sign_transaction ----
     tx_nonce = w3.eth.get_transaction_count(test_eoa.address)
     base_fee = w3.eth.get_block("pending").get("baseFeePerGas", gas_price)
 
@@ -104,58 +116,34 @@ def main() -> None:
     )
 
     calldata = checker.encode_abi("check")
-    to_bytes = bytes.fromhex(test_eoa.address[2:])
-    checker_bytes = bytes.fromhex(checker_addr[2:])
-    calldata_raw = bytes.fromhex(calldata[2:])
 
     max_priority = w3.to_wei(1, "gwei")
     max_fee = base_fee + max_priority
-    gas_limit = 100_000
 
-    # Build payload with placeholder signature, hash, sign, replace
-    payload_placeholder = rlp.encode([
-        chain_id, tx_nonce,
-        max_priority, max_fee, gas_limit,
-        to_bytes, 0, calldata_raw, [],
-        [[chain_id, checker_bytes, tx_nonce + 1, auth.y_parity, auth.r, auth.s]],
-        0, 0, 0,
-    ])
+    tx = {
+        "type": 4,  # EIP-7702 set code transaction
+        "chainId": chain_id,
+        "nonce": tx_nonce,
+        "to": test_eoa.address,  # self-call
+        "value": 0,
+        "gas": 100_000,
+        "maxFeePerGas": max_fee,
+        "maxPriorityFeePerGas": max_priority,
+        "data": calldata,
+        "accessList": (),
+        "authorizationList": [auth],
+    }
 
-    hash_to_sign = _keccak(bytes([4]) + payload_placeholder)
-    pk = keys.PrivateKey(test_eoa.key)
-    sig = pk.sign_msg_hash(hash_to_sign)
-    y_parity_val = sig.v if sig.v <= 1 else sig.v - 27
-
-    raw_tx = bytes([4]) + rlp.encode([
-        chain_id, tx_nonce,
-        max_priority, max_fee, gas_limit,
-        to_bytes, 0, calldata_raw, [],
-        [[chain_id, checker_bytes, tx_nonce + 1, auth.y_parity, auth.r, auth.s]],
-        y_parity_val, sig.r, sig.s,
-    ])
-
-    # ---- Send EIP-7702 tx ----
-    print("--- EIP-7702 test: raw signed type 0x04 ---")
+    # Send EIP-7702 tx via Account.sign_transaction
+    print("--- EIP-7702 test: Account.sign_transaction with type=4 ---")
     print(f"  max_fee:        {w3.from_wei(max_fee, 'gwei')} gwei")
     print(f"  max_priority:   {w3.from_wei(max_priority, 'gwei')} gwei")
-    print(f"  gas:            {gas_limit}")
+    print(f"  gas:            100000")
     print(f"  auth_nonce:     {tx_nonce + 1} (tx_nonce + 1)")
-    print(f"  Raw tx length:  {len(raw_tx)} bytes")
 
     try:
-        # Retry with backoff for RPC consistency
-        tx_hash = None
-        for attempt in range(10):
-            try:
-                tx_hash = w3.eth.send_raw_transaction(raw_tx)
-                break
-            except Exception as e:
-                if "insufficient funds" in str(e) and attempt < 9:
-                    print(f"  Retry {attempt + 1}/10 (RPC consistency)...")
-                    time.sleep(2)
-                    continue
-                raise e
-
+        signed = Account.sign_transaction(tx, test_eoa.key)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
         print(f"  Status:         {receipt.status}")
         print(f"  Gas used:       {receipt.gasUsed}")
