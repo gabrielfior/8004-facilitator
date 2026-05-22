@@ -83,6 +83,7 @@
     <header>
         <h1>x402 x ERC-8004 Reputation Flow</h1>
         <p>What we built vs what x402 gives us out of the box</p>
+        <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Updated: 2026-05-22</p>
     </header>
 
     <div class="legend">
@@ -117,7 +118,7 @@
                 <li><strong>Payer-gated verified feedback</strong> — <code>msg.sender</code> must match <code>settlementPayer[txHash]</code> for verified path</li>
                 <li><strong>Settlement dedup</strong> — <code>usedSettlements[txHash]</code> enforces one settlement = one verified feedback</li>
                 <li><strong>Unverified fallback</strong> — if no settlement binding, feedback still counts via dedup (lower weight)</li>
-                <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (Sepolia) or direct call (Anvil/Tenderly); no facilitator needed</li>
+                <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (Anvil Prague, Sepolia Pectra) or direct call fallback (Tenderly); no facilitator needed</li>
                 <li><strong>Permissionless recording</strong> — facilitator or agent can call <code>recordSettlement</code>; three-tier resilience</li>
                 <li><strong>Agent registration</strong> — <code>IdentityRegistry.register()</code> mints agent NFT</li>
             </ul>
@@ -173,7 +174,7 @@
             <div><div class="row-num purple">7</div></div>
             <div class="row-content">
                 <div class="row-arrow">Client &rarr; On-chain (pays own gas) <span class="row-badge new">new</span></div>
-                <div class="row-desc">Polls <code>settlementPayer[txHash]</code> from chain until <code>!= address(0)</code>. Sends <code>submitFeedback</code> via EIP-7702 self-call (<code>from: client, to: client, authorizationList: [auth]</code>) on chains that support it (Sepolia Pectra), or direct call (<code>to: gateway</code>) on Anvil/Tenderly. Contract checks <code>settlementPayer[txHash] == msg.sender</code> for verified path (with settlement dedup). Falls back to unverified if no binding. No relayer.</div>
+                <div class="row-desc">Polls <code>settlementPayer[txHash]</code> from chain until <code>!= address(0)</code>. Sends <code>submitFeedback</code> via EIP-7702 self-call (<code>from: client, to: client, authorizationList: [auth]</code>) on Anvil Prague / Sepolia Pectra, or direct call (<code>to: gateway</code>) on Tenderly. Contract checks <code>settlementPayer[txHash] == msg.sender</code> for verified path (with settlement dedup). Falls back to unverified if no binding. No relayer.</div>
             </div>
         </div>
     </section>
@@ -195,8 +196,8 @@
             <div class="row-content">
                 <div class="row-arrow">Call submitFeedback <span class="row-badge new">client</span></div>
                 <div class="row-desc">Two modes controlled by <code>EIP_7702_SUPPORTED</code> env var:<br>
-                <strong>EIP-7702</strong> (Sepolia Pectra): signs authorization delegating EOA to <code>FeedbackGateway</code>, sends <code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(...) }</code><br>
-                <strong>Direct</strong> (Anvil/Tenderly): sends <code>{ from: client, to: gateway, data: submitFeedback(...) }</code> — registry sees gateway as author</div>
+                <strong>EIP-7702</strong> (Anvil Prague, Sepolia Pectra): signs authorization delegating EOA to <code>FeedbackGateway</code>, sends <code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(...) }</code> — registry records client as author<br>
+                <strong>Direct</strong> (Tenderly): sends <code>{ from: client, to: gateway, data: submitFeedback(...) }</code> — registry sees gateway as author</div>
             </div>
         </div>
 
