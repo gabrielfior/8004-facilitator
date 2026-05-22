@@ -91,11 +91,11 @@
     </div>
 
     <div class="parties">
-        <div class="party client"><div class="icon">&#x1f9d1;&#x200d;&#x1f4bb;</div><div class="name">Client</div><div class="role">Pays, collects proof,<br>submits feedback</div><div class="meta">Fresh EOA</div></div>
+        <div class="party client"><div class="icon">&#x1f9d1;&#x200d;&#x1f4bb;</div><div class="name">Client</div><div class="role">Pays, polls on-chain<br>settlement, submits feedback</div><div class="meta">Fresh EOA</div></div>
         <div class="party server"><div class="icon">&#x1f5a5;&#xfe0f;</div><div class="name">Resource Server</div><div class="role">Serves /weather</div><div class="meta">:4021 FastAPI</div></div>
-        <div class="party fac"><div class="icon">&#x2699;&#xfe0f;</div><div class="name">Facilitator</div><div class="role">Verifies &amp; settles</div><div class="meta">:4022 FastAPI</div></div>
-        <div class="party agent-eoa"><div class="icon">&#x1f916;</div><div class="name">Agent</div><div class="role">Receives payment,<br>commits to request,<br>builds reputation</div><div class="meta">Fresh EOA, agentId</div></div>
-        <div class="party chain"><div class="icon">&#x26c8;&#xfe0f;</div><div class="name">On-chain</div><div class="role">IdentityRegistry<br>ReputationRegistry<br>FeedbackGateway<br>(commitments + dedup)<br>Permit2</div><div class="meta">Anvil / Tenderly</div></div>
+        <div class="party fac"><div class="icon">&#x2699;&#xfe0f;</div><div class="name">Facilitator</div><div class="role">Verifies, settles,<br>records payer</div><div class="meta">:4022 FastAPI</div></div>
+        <div class="party agent-eoa"><div class="icon">&#x1f916;</div><div class="name">Agent</div><div class="role">Receives payment,<br>builds reputation</div><div class="meta">Fresh EOA, agentId</div></div>
+        <div class="party chain"><div class="icon">&#x26c8;&#xfe0f;</div><div class="name">On-chain</div><div class="role">IdentityRegistry<br>ReputationRegistry<br>FeedbackGateway<br>(settlementPayer + dedup)<br>Permit2</div><div class="meta">Anvil / Tenderly</div></div>
     </div>
 
     <div class="delta">
@@ -113,13 +113,12 @@
         <div class="delta-box new">
             <h3>&#x2728; Our additions (ERC-8004 reputation layer)</h3>
             <ul>
-                <li><strong>ReputationMiddleware</strong> — computes <code>reqHash = keccak256(reqBody)</code>, attaches to <code>erc-8004</code> extension in 402</li>
-                <li><strong><code>reqHash</code> in 402</strong> — agent advertises request commitment (tx hash unknown yet)</li>
-                <li><strong><code>X-Reputation-Commitment</code> header</strong> — convenience header with <code>hash(agentId, reqHash, respHash)</code></li>
-                <li><strong>FeedbackGateway.recordCommitment()</strong> — stores <code>commitments[agentId][hash(agentId, reqHash, txHash)]</code> after settlement</li>
+                <li><strong>FeedbackGateway.recordSettlement()</strong> — stores <code>settlementPayer[txHash] = payer</code> after settlement</li>
+                <li><strong>Payer-gated verified feedback</strong> — <code>msg.sender</code> must match <code>settlementPayer[txHash]</code> for verified path</li>
                 <li><strong>Settlement dedup</strong> — <code>usedSettlements[txHash]</code> enforces one settlement = one verified feedback</li>
-                <li><strong>FeedbackGateway.submitFeedback()</strong> — verifies commitment + settlement dedup + hash dedup, delegates to ReputationRegistry</li>
+                <li><strong>Unverified fallback</strong> — if no settlement binding, feedback still counts via dedup (lower weight)</li>
                 <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (no facilitator needed)</li>
+                <li><strong>Permissionless recording</strong> — facilitator or agent can call <code>recordSettlement</code>; three-tier resilience</li>
                 <li><strong>Agent registration</strong> — <code>IdentityRegistry.register()</code> mints agent NFT</li>
             </ul>
         </div>
@@ -160,76 +159,61 @@
             <div><div class="row-num grey">5</div></div>
             <div class="row-content">
                 <div class="row-arrow">Server &rarr; Client <span class="row-badge std">x402</span></div>
-                <div class="row-desc"><code>200 OK</code> + <code>PAYMENT-RESPONSE</code> header (settlement tx hash, payer).</div>
+                <div class="row-desc"><code>200 OK</code> + <code>PAYMENT-RESPONSE</code> header (settlement tx hash, payer). Client receives the settlement <code>txHash</code>.</div>
             </div>
         </div>
         <div class="row new">
             <div><div class="row-num purple">6</div></div>
             <div class="row-content">
-                <div class="row-arrow">ReputationMiddleware (on Server) <span class="row-badge new">new</span></div>
-                <div class="row-desc">Computes <code>reqHash = keccak256(reqBody)</code> on incoming request. Attaches to <code>erc-8004</code> extension in 402 response.</div>
+                <div class="row-arrow">Facilitator (or Agent) &rarr; On-chain <span class="row-badge new">new</span></div>
+                <div class="row-desc">After settlement: calls <code>FeedbackGateway.recordSettlement(txHash, clientAddress)</code>. Stores <code>settlementPayer[txHash] = clientAddress</code>. Permissionless — facilitator, agent, or anyone can record.</div>
             </div>
         </div>
         <div class="row new">
             <div><div class="row-num purple">7</div></div>
             <div class="row-content">
-                <div class="row-arrow">Facilitator (or Agent) &rarr; On-chain <span class="row-badge new">new</span></div>
-                <div class="row-desc">After settlement: computes <code>commitment = keccak256(agentId, reqHash, settlementTxHash)</code>. Calls <code>FeedbackGateway.recordCommitment(agentId, commitment)</code>.</div>
-            </div>
-        </div>
-        <div class="row new">
-            <div><div class="row-num purple">8</div></div>
-            <div class="row-content">
                 <div class="row-arrow">Client &rarr; On-chain (pays own gas) <span class="row-badge new">new</span></div>
-                <div class="row-desc">Verifies <code>commitments[agentId][hash(agentId, reqHash, txHash)]</code> from chain. Signs EIP-7702 auth, sends tx <code>from: client, to: client, authorizationList: [auth], data: submitFeedback()</code>. Contract checks commitment + settlement dedup + hash dedup. No relayer.</div>
+                <div class="row-desc">Polls <code>settlementPayer[txHash]</code> from chain until <code>!= address(0)</code>. Signs EIP-7702 auth, sends tx <code>from: client, to: client, authorizationList: [auth], data: submitFeedback()</code>. Contract checks <code>settlementPayer[txHash] == msg.sender</code> for verified path (with settlement dedup). Falls back to unverified if no binding. No relayer.</div>
             </div>
         </div>
     </section>
 
     <section>
-        <h2>Detailed: Client submits feedback (step 8)</h2>
-        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:var(--space-3);">The client submits on-chain feedback without any relayer or facilitator involvement. EIP-7702 delegation ensures <code>msg.sender</code> on <code>ReputationRegistry</code> is the client EOA (correct attribution).</p>
+        <h2>Detailed: Client submits feedback (step 7)</h2>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:var(--space-3);">The client submits on-chain feedback without any relayer or facilitator involvement. EIP-7702 delegation ensures <code>msg.sender</code> on <code>ReputationRegistry</code> is the client EOA (correct attribution). No reqHash, respHash, or commitment preimage needed — identity replaces secrets.</p>
 
         <div class="row new">
-            <div><div class="row-num purple">8a</div></div>
+            <div><div class="row-num purple">7a</div></div>
             <div class="row-content">
-                <div class="row-arrow">Compute hashes <span class="row-badge new">client</span></div>
-                <div class="row-desc"><code>reqHash = keccak256(canonicalJSON(reqBody))</code><br><code>respHash = keccak256(canonicalJSON(respBody))</code><br><code>feedbackHash = keccak256(abi.encode(agentId, reqHash, respHash, value, valueDecimals))</code></div>
+                <div class="row-arrow">Poll settlementPayer <span class="row-badge new">client</span></div>
+                <div class="row-desc">Poll <code>FeedbackGateway.settlementPayer[txHash]</code> until <code>!= address(0)</code>. Waits for facilitator or agent to record it after settlement. <code>txHash</code> comes from <code>PAYMENT-RESPONSE</code> header.</div>
             </div>
         </div>
 
         <div class="row new">
-            <div><div class="row-num purple">8b</div></div>
-            <div class="row-content">
-                <div class="row-arrow">Poll on-chain commitment <span class="row-badge new">client</span></div>
-                <div class="row-desc">Poll <code>FeedbackGateway.commitments[agentId][keccak256(abi.encode(agentId, reqHash, settlementTxHash))]</code> until <code>true</code>. Waits for facilitator/agent to record it after settlement.</div>
-            </div>
-        </div>
-
-        <div class="row new">
-            <div><div class="row-num purple">8c</div></div>
+            <div><div class="row-num purple">7b</div></div>
             <div class="row-content">
                 <div class="row-arrow">Sign EIP-7702 authorization <span class="row-badge new">client</span></div>
-                <div class="row-desc">Client signs an EIP-7702 authorization delegating its EOA to <code>FeedbackGateway</code> (one signature):<br><code>auth = walletClient.signAuthorization({ contractAddress: feedbackGateway })</code><br>This is the only signature the client produces for feedback.</div>
+                <div class="row-desc">Client signs an EIP-7702 authorization delegating its EOA to <code>FeedbackGateway</code> (one signature):<br><code>auth = walletClient.signAuthorization({ contractAddress: feedbackGateway })</code></div>
             </div>
         </div>
 
         <div class="row new">
-            <div><div class="row-num purple">8d</div></div>
+            <div><div class="row-num purple">7c</div></div>
             <div class="row-content">
                 <div class="row-arrow">Send tx to self <span class="row-badge new">client</span></div>
-                <div class="row-desc">Client sends a transaction targeting its own address with the authorization list. The client EOA temporarily runs <code>FeedbackGateway</code> bytecode via the delegation. Client pays gas directly (no relayer):<br><code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(registry, params) }</code></div>
+                <div class="row-desc">Client sends a transaction targeting its own address with the authorization list. Client pays gas directly (no relayer):<br><code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(registry, params, txHash) }</code></div>
             </div>
         </div>
 
         <div class="row new">
-            <div><div class="row-num purple">8e</div></div>
+            <div><div class="row-num purple">7d</div></div>
             <div class="row-content">
                 <div class="row-arrow">FeedbackGateway executes <span class="row-badge new">on-chain</span></div>
                 <div class="row-desc">Inside <code>submitFeedback</code>, <code>msg.sender = client</code> (the EOA). The contract:<br>
-                1. Verifies <code>commitments[agentId][hash(agentId, reqHash, txHash)] == true</code><br>
-                2. Marks <code>usedSettlements[txHash] = true</code> (one settlement = one verified feedback)<br>
-                3. Calls <code>consumeInteractionHash(feedbackHash)</code> on the singleton dedup store (immutable self-reference)<br>
+                1. If <code>settlementTxHash != bytes32(0) && settlementPayer[txHash] == msg.sender</code> → verified path: marks <code>usedSettlements[txHash] = true</code><br>
+                2. If settlement already used → revert<br>
+                3. Calls <code>consumeInteractionHash(feedbackHash)</code> for dedup (computed as <code>keccak256(agentId, txHash)</code>)<br>
                 4. Calls <code>ReputationRegistry.giveFeedback(...)</code> — registry records <code>msg.sender = client</code> as author</div>
             </div>
         </div>
@@ -255,20 +239,14 @@
     |                   |                |                |               |
   5 |&lt;-- 200 + tx hash -|                |                |               |
     |                   |                |                |               |</span>
-<span class="new">  6 |                   |(RepMiddleware) |                |               |
-     |                   | reqHash=keccak256               |               |
-     |&lt;-- 402 + reqHash -|                |                |               |
-     |                   |                |                |               |
-   7 |-------------------|- POST /settle ->|                |               |
-     |                   |                |-- recordCmmit -->| FeedbackGw  |
-     |                   |                |   (agentId,    |               |
-     |                   |                |    commitment) |               |
-     |                   |                |                |               |
-   8 |-- submitFeedback ->|                |                |               |
-     |   (via EIP-7702)  |                |-- verify ----->| FeedbackGw   |
-     |                   |                |   commitment   | (commitments) |
-     |                   |                |-- dedup ------>| (usedSettlmts)|
-     |                   |                |-- giveFdbk --->| ReputationR  |</span>
+<span class="new">  6 |                   |                |-- recordSttlm ->| FeedGw       |
+    |                   |                |   (txHash,     |  settlementP |
+    |                   |                |    payer)      |  [tx]=payer  |
+    |                   |                |                |               |
+  7 |-- submitFeedback ->|                |                |               |
+    |   (via EIP-7702)  |                |-- payer chk -->|  settlementP |
+    |                   |                |-- dedup ------>|  (usedSttlmts)|
+    |                   |                |-- giveFdbk --->| ReputationR  |</span>
 
 <span class="dim">  Dim text = standard x402 (unchanged from SDK)</span>
 <span class="new">  Purple   = our ERC-8004 additions (new code)</span></div>
@@ -281,11 +259,10 @@
             <div class="arch-item"><span class="tag std">x402</span><h4>DAI (real)</h4><p>EIP-2612 token. Permit2 via x402 Proxy. Client pre-approves Permit2 contract.</p><div class="file">0x6B1754... (fork)</div></div>
             <div class="arch-item"><span class="tag std">x402</span><h4>PaymentMiddlewareASGI</h4><p>FastAPI middleware that intercepts PAYMENT-SIGNATURE, calls verify/settle. Core x402 flow.</p><div class="file">x402 SDK</div></div>
             <div class="arch-item"><span class="tag std">x402</span><h4>Facilitator (verify/settle)</h4><p>x402Facilitator + HTTP endpoints. Verifies signatures, simulates, settles on-chain.</p><div class="file">main.py (thin wrapper)</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>ReputationMiddleware</h4><p>Computes reqHash on incoming request, attaches to erc-8004 extension in 402.</p><div class="file">src/agent_server/app.py</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>FeedbackGateway</h4><p>On-chain contract: commitments mapping + settlement dedup + hash dedup.</p><div class="file">contracts/FeedbackGateway.sol</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>FeedbackGateway</h4><p>On-chain contract: settlementPayer mapping + settlement dedup + hash dedup.</p><div class="file">contracts/FeedbackGateway.sol</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>recordSettlement</h4><p>Facilitator or agent records settlementPayer[txHash] after settlement. Permissionless, first-writer wins.</p><div class="file">src/facilitator/app.py</div></div>
             <div class="arch-item new"><span class="tag new">new</span><h4>Agent registration</h4><p>IdentityRegistry.register() mints agent NFT. Client discovers via tokenURI.</p><div class="file">ERC-8004 (real)</div></div>
             <div class="arch-item new"><span class="tag new">new</span><h4>On-chain reputation</h4><p>ReputationRegistry stores feedback. Client calls submitFeedback() via EIP-7702.</p><div class="file">ERC-8004 (real)</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>recordCommitment</h4><p>Facilitator (or agent) records hash(agentId, reqHash, txHash) after settlement.</p><div class="file">src/facilitator/app.py</div></div>
         </div>
     </section>
 
