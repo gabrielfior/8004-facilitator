@@ -160,13 +160,35 @@ def _tenderly_set_balance(w3: Web3, address: str, amount_wei: int) -> bool:
 
 
 def _set_erc20_balance(w3: Web3, token: str, address: str, amount: int) -> bool:
+    # Try RPC methods first (Tenderly, newer Anvil)
     for method in ("tenderly_setErc20Balance", "anvil_setErc20Balance"):
         try:
             w3.provider.make_request(method, [token, address, hex(amount)])
             return True
         except Exception:
             continue
-    return False
+    # Fallback: transfer from a known whale via impersonation (forked Anvil)
+    _USDC_WHALE = "0x28C6c06298d514Db089934071355E5743bf21d60"
+    _DAI_WHALE = "0x28C6c06298d514Db089934071355E5743bf21d60"
+    whale = _USDC_WHALE if token.lower() == Web3.to_checksum_address(MAINNET_USDC_ADDRESS).lower() else _DAI_WHALE
+    try:
+        w3.provider.make_request("anvil_impersonateAccount", [whale])
+        erc20 = w3.eth.contract(
+            address=Web3.to_checksum_address(token),
+            abi=[{"inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}],
+        )
+        tx_hash = w3.eth.send_transaction({
+            "from": whale,
+            "to": erc20.address,
+            "data": erc20.encode_abi("transfer", args=[Web3.to_checksum_address(address), amount]),
+            "gas": 100_000,
+            "gasPrice": w3.to_wei(1, "gwei"),
+        })
+        w3.eth.wait_for_transaction_receipt(tx_hash)
+        w3.provider.make_request("anvil_stopImpersonatingAccount", [whale])
+        return True
+    except Exception:
+        return False
 
 
 def bootstrap() -> LocalSetup:
