@@ -163,8 +163,9 @@ def _set_erc20_balance(w3: Web3, token: str, address: str, amount: int) -> bool:
     # Try RPC methods first (Tenderly, newer Anvil)
     for method in ("tenderly_setErc20Balance", "anvil_setErc20Balance"):
         try:
-            w3.provider.make_request(method, [token, address, hex(amount)])
-            return True
+            resp = w3.provider.make_request(method, [token, address, hex(amount)])
+            if "error" not in resp:
+                return True
         except Exception:
             continue
     # Fallback: transfer from a known whale via impersonation (forked Anvil)
@@ -187,7 +188,8 @@ def _set_erc20_balance(w3: Web3, token: str, address: str, amount: int) -> bool:
         w3.eth.wait_for_transaction_receipt(tx_hash)
         w3.provider.make_request("anvil_stopImpersonatingAccount", [whale])
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("Impersonation failed: %s", exc)
         return False
 
 

@@ -117,7 +117,7 @@
                 <li><strong>Payer-gated verified feedback</strong> — <code>msg.sender</code> must match <code>settlementPayer[txHash]</code> for verified path</li>
                 <li><strong>Settlement dedup</strong> — <code>usedSettlements[txHash]</code> enforces one settlement = one verified feedback</li>
                 <li><strong>Unverified fallback</strong> — if no settlement binding, feedback still counts via dedup (lower weight)</li>
-                <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (no facilitator needed)</li>
+                <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (Sepolia) or direct call (Anvil/Tenderly); no facilitator needed</li>
                 <li><strong>Permissionless recording</strong> — facilitator or agent can call <code>recordSettlement</code>; three-tier resilience</li>
                 <li><strong>Agent registration</strong> — <code>IdentityRegistry.register()</code> mints agent NFT</li>
             </ul>
@@ -173,7 +173,7 @@
             <div><div class="row-num purple">7</div></div>
             <div class="row-content">
                 <div class="row-arrow">Client &rarr; On-chain (pays own gas) <span class="row-badge new">new</span></div>
-                <div class="row-desc">Polls <code>settlementPayer[txHash]</code> from chain until <code>!= address(0)</code>. Signs EIP-7702 auth, sends tx <code>from: client, to: client, authorizationList: [auth], data: submitFeedback()</code>. Contract checks <code>settlementPayer[txHash] == msg.sender</code> for verified path (with settlement dedup). Falls back to unverified if no binding. No relayer.</div>
+                <div class="row-desc">Polls <code>settlementPayer[txHash]</code> from chain until <code>!= address(0)</code>. Sends <code>submitFeedback</code> via EIP-7702 self-call (<code>from: client, to: client, authorizationList: [auth]</code>) on chains that support it (Sepolia Pectra), or direct call (<code>to: gateway</code>) on Anvil/Tenderly. Contract checks <code>settlementPayer[txHash] == msg.sender</code> for verified path (with settlement dedup). Falls back to unverified if no binding. No relayer.</div>
             </div>
         </div>
     </section>
@@ -193,21 +193,15 @@
         <div class="row new">
             <div><div class="row-num purple">7b</div></div>
             <div class="row-content">
-                <div class="row-arrow">Sign EIP-7702 authorization <span class="row-badge new">client</span></div>
-                <div class="row-desc">Client signs an EIP-7702 authorization delegating its EOA to <code>FeedbackGateway</code> (one signature):<br><code>auth = walletClient.signAuthorization({ contractAddress: feedbackGateway })</code></div>
+                <div class="row-arrow">Call submitFeedback <span class="row-badge new">client</span></div>
+                <div class="row-desc">Two modes controlled by <code>EIP_7702_SUPPORTED</code> env var:<br>
+                <strong>EIP-7702</strong> (Sepolia Pectra): signs authorization delegating EOA to <code>FeedbackGateway</code>, sends <code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(...) }</code><br>
+                <strong>Direct</strong> (Anvil/Tenderly): sends <code>{ from: client, to: gateway, data: submitFeedback(...) }</code> — registry sees gateway as author</div>
             </div>
         </div>
 
         <div class="row new">
             <div><div class="row-num purple">7c</div></div>
-            <div class="row-content">
-                <div class="row-arrow">Send tx to self <span class="row-badge new">client</span></div>
-                <div class="row-desc">Client sends a transaction targeting its own address with the authorization list. Client pays gas directly (no relayer):<br><code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(registry, params, txHash) }</code></div>
-            </div>
-        </div>
-
-        <div class="row new">
-            <div><div class="row-num purple">7d</div></div>
             <div class="row-content">
                 <div class="row-arrow">FeedbackGateway executes <span class="row-badge new">on-chain</span></div>
                 <div class="row-desc">Inside <code>submitFeedback</code>, <code>msg.sender = client</code> (the EOA). The contract:<br>
@@ -258,7 +252,7 @@
             <div class="arch-item"><span class="tag std">x402</span><h4>USDC (real)</h4><p>Mainnet USDC on fork. EIP-3009 transferWithAuthorization. No prior approval.</p><div class="file">0xA0b869... (fork)</div></div>
             <div class="arch-item"><span class="tag std">x402</span><h4>DAI (real)</h4><p>EIP-2612 token. Permit2 via x402 Proxy. Client pre-approves Permit2 contract.</p><div class="file">0x6B1754... (fork)</div></div>
             <div class="arch-item"><span class="tag std">x402</span><h4>PaymentMiddlewareASGI</h4><p>FastAPI middleware that intercepts PAYMENT-SIGNATURE, calls verify/settle. Core x402 flow.</p><div class="file">x402 SDK</div></div>
-            <div class="arch-item"><span class="tag std">x402</span><h4>Facilitator (verify/settle)</h4><p>x402Facilitator + HTTP endpoints. Verifies signatures, simulates, settles on-chain.</p><div class="file">main.py (thin wrapper)</div></div>
+            <div class="arch-item"><span class="tag std">x402</span><h4>Facilitator (verify/settle)</h4><p>x402Facilitator + HTTP endpoints. Verifies signatures, simulates, settles on-chain.</p><div class="file">src/facilitator/app.py</div></div>
             <div class="arch-item new"><span class="tag new">new</span><h4>FeedbackGateway</h4><p>On-chain contract: settlementPayer mapping + settlement dedup + hash dedup.</p><div class="file">contracts/FeedbackGateway.sol</div></div>
             <div class="arch-item new"><span class="tag new">new</span><h4>recordSettlement</h4><p>Facilitator or agent records settlementPayer[txHash] after settlement. Permissionless, first-writer wins.</p><div class="file">src/facilitator/app.py</div></div>
             <div class="arch-item new"><span class="tag new">new</span><h4>Agent registration</h4><p>IdentityRegistry.register() mints agent NFT. Client discovers via tokenURI.</p><div class="file">ERC-8004 (real)</div></div>
