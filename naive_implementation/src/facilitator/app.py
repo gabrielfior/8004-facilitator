@@ -99,6 +99,15 @@ def create_app(
 
         return result
 
+    @app.get("/supported")
+    async def supported() -> dict:
+        response = core.get_supported()
+        return {
+            "kinds": [k.model_dump(by_alias=True, exclude_none=True) for k in response.kinds],
+            "extensions": response.extensions,
+            "signers": response.signers,
+        }
+
     @app.get("/gateway")
     async def gateway_addr() -> dict:
         return {"feedbackGateway": feedback_gateway}

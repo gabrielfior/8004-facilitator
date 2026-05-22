@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -27,6 +28,11 @@ from src.shared.constants import (
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("client")
+
+# EIP-7702 is supported on Sepolia (Pectra) but not on local Anvil.
+# On Sepolia: EIP_7702_SUPPORTED=true → client self-call preserves msg.sender
+# On Anvil: EIP_7702_SUPPORTED=false → direct call to gateway (registry sees gateway as caller)
+EIP_7702_SUPPORTED = os.getenv("EIP_7702_SUPPORTED", "").lower() in ("1", "true", "yes")
 
 
 def load_gateway_artifact() -> dict:
@@ -117,15 +123,6 @@ async def run_paying_client(
         logger.warning("Feedback hash already used — duplicate blocked")
         return False
 
-    authorization = Account.sign_authorization(
-        {
-            "chainId": w3.eth.chain_id,
-            "address": Web3.to_checksum_address(feedback_gateway),
-            "nonce": w3.eth.get_transaction_count(client_acct.address),
-        },
-        client_key,
-    )
-
     params_tuple = (
         agent_id,
         95,             # value
@@ -141,21 +138,45 @@ async def run_paying_client(
         args=[Web3.to_checksum_address(REPUTATION_REGISTRY), params_tuple, settlement_tx_hash],
     )
 
-    tx = {
-        "chainId": w3.eth.chain_id,
-        "from": client_acct.address,
-        "to": client_acct.address,
-        "nonce": w3.eth.get_transaction_count(client_acct.address),
-        "value": 0,
-        "maxFeePerGas": w3.to_wei(2, "gwei"),
-        "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-        "data": calldata,
-        "authorizationList": [authorization],
-    }
+    gateway_addr = Web3.to_checksum_address(feedback_gateway)
+
+    if EIP_7702_SUPPORTED:
+        authorization = Account.sign_authorization(
+            {
+                "chainId": w3.eth.chain_id,
+                "address": gateway_addr,
+                "nonce": w3.eth.get_transaction_count(client_acct.address),
+            },
+            client_key,
+        )
+        tx = {
+            "chainId": w3.eth.chain_id,
+            "from": client_acct.address,
+            "to": client_acct.address,
+            "nonce": w3.eth.get_transaction_count(client_acct.address),
+            "value": 0,
+            "maxFeePerGas": w3.to_wei(2, "gwei"),
+            "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
+            "data": calldata,
+            "authorizationList": [authorization],
+        }
+    else:
+        tx = {
+            "chainId": w3.eth.chain_id,
+            "from": client_acct.address,
+            "to": gateway_addr,
+            "nonce": w3.eth.get_transaction_count(client_acct.address),
+            "value": 0,
+            "maxFeePerGas": w3.to_wei(2, "gwei"),
+            "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
+            "data": calldata,
+        }
+
     estimated = w3.eth.estimate_gas(tx)
     gas_limit = estimated + max(estimated * 20 // 100, 21_000)
     tx["gas"] = gas_limit
-    logger.info("submitFeedback gas estimate=%s limit=%s", estimated, gas_limit)
+    mode = "EIP-7702" if EIP_7702_SUPPORTED else "direct"
+    logger.info("submitFeedback (mode=%s) gas estimate=%s limit=%s", mode, estimated, gas_limit)
 
     signed = client_acct.sign_transaction(tx)
     receipt = w3.eth.wait_for_transaction_receipt(
@@ -163,9 +184,8 @@ async def run_paying_client(
     )
 
     logger.info(
-        "EIP-7702 submitFeedback: status=%s gasUsed=%s",
-        receipt.status,
-        receipt.gasUsed,
+        "%s submitFeedback: status=%s gasUsed=%s",
+        mode, receipt.status, receipt.gasUsed,
     )
 
     if not receipt.status:
