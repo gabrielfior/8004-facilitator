@@ -83,7 +83,7 @@
     <header>
         <h1>x402 x ERC-8004 Reputation Flow</h1>
         <p>What we built vs what x402 gives us out of the box</p>
-        <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Updated: 2026-05-22</p>
+        <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Updated: 2026-05-25</p>
     </header>
 
     <div class="legend">
@@ -96,7 +96,7 @@
         <div class="party server"><div class="icon">&#x1f5a5;&#xfe0f;</div><div class="name">Resource Server</div><div class="role">Serves /weather</div><div class="meta">:4021 FastAPI</div></div>
         <div class="party fac"><div class="icon">&#x2699;&#xfe0f;</div><div class="name">Facilitator</div><div class="role">Verifies, settles,<br>records payer</div><div class="meta">:4022 FastAPI</div></div>
         <div class="party agent-eoa"><div class="icon">&#x1f916;</div><div class="name">Agent</div><div class="role">Receives payment,<br>builds reputation</div><div class="meta">Fresh EOA, agentId</div></div>
-        <div class="party chain"><div class="icon">&#x26c8;&#xfe0f;</div><div class="name">On-chain</div><div class="role">IdentityRegistry<br>ReputationRegistry<br>FeedbackGateway<br>(settlementPayer + dedup)<br>Permit2</div><div class="meta">Anvil / Tenderly</div></div>
+        <div class="party chain"><div class="icon">&#x26c8;&#xfe0f;</div><div class="name">On-chain</div><div class="role">IdentityRegistry (mainnet)<br>ReputationRegistry (mainnet)<br>FeedbackGateway<br>(settlementPayer + dedup)<br>Permit2</div><div class="meta">Anvil fork (Prague)</div></div>
     </div>
 
     <div class="delta">
@@ -118,7 +118,7 @@
                 <li><strong>Payer-gated verified feedback</strong> — <code>msg.sender</code> must match <code>settlementPayer[txHash]</code> for verified path</li>
                 <li><strong>Settlement dedup</strong> — <code>usedSettlements[txHash]</code> enforces one settlement = one verified feedback</li>
                 <li><strong>Unverified fallback</strong> — if no settlement binding, feedback still counts via dedup (lower weight)</li>
-                <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (Anvil Prague, Sepolia Pectra) or direct call fallback (Tenderly); no facilitator needed</li>
+                <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (Anvil Prague, Sepolia Pectra) or direct call fallback; no facilitator needed</li>
                 <li><strong>Permissionless recording</strong> — facilitator or agent can call <code>recordSettlement</code>; three-tier resilience</li>
                 <li><strong>Agent registration</strong> — <code>IdentityRegistry.register()</code> mints agent NFT</li>
             </ul>
@@ -174,7 +174,7 @@
             <div><div class="row-num purple">7</div></div>
             <div class="row-content">
                 <div class="row-arrow">Client &rarr; On-chain (pays own gas) <span class="row-badge new">new</span></div>
-                <div class="row-desc">Polls <code>settlementPayer[txHash]</code> from chain until <code>!= address(0)</code>. Sends <code>submitFeedback</code> via EIP-7702 self-call (<code>from: client, to: client, authorizationList: [auth]</code>) on Anvil Prague / Sepolia Pectra, or direct call (<code>to: gateway</code>) on Tenderly. Contract checks <code>settlementPayer[txHash] == msg.sender</code> for verified path (with settlement dedup). Falls back to unverified if no binding. No relayer.</div>
+                <div class="row-desc">Polls <code>settlementPayer[txHash]</code> from chain until <code>!= address(0)</code>. Sends <code>submitFeedback</code> via EIP-7702 self-call (<code>from: client, to: client, authorizationList: [auth]</code>) on Anvil Prague / Sepolia Pectra, or direct call (<code>to: gateway</code>) on chains without EIP-7702. Contract checks <code>settlementPayer[txHash] == msg.sender</code> for verified path (with settlement dedup). Falls back to unverified if no binding. No relayer.</div>
             </div>
         </div>
     </section>
@@ -197,7 +197,7 @@
                 <div class="row-arrow">Call submitFeedback <span class="row-badge new">client</span></div>
                 <div class="row-desc">Two modes controlled by <code>EIP_7702_SUPPORTED</code> env var:<br>
                 <strong>EIP-7702</strong> (Anvil Prague, Sepolia Pectra): signs authorization delegating EOA to <code>FeedbackGateway</code>, sends <code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(...) }</code> — registry records client as author<br>
-                <strong>Direct</strong> (Tenderly): sends <code>{ from: client, to: gateway, data: submitFeedback(...) }</code> — registry sees gateway as author</div>
+                <strong>Direct</strong> (chains without EIP-7702): sends <code>{ from: client, to: gateway, data: submitFeedback(...) }</code> — registry sees gateway as author</div>
             </div>
         </div>
 
@@ -256,8 +256,8 @@
             <div class="arch-item"><span class="tag std">x402</span><h4>Facilitator (verify/settle)</h4><p>x402Facilitator + HTTP endpoints. Verifies signatures, simulates, settles on-chain.</p><div class="file">src/facilitator/app.py</div></div>
             <div class="arch-item new"><span class="tag new">new</span><h4>FeedbackGateway</h4><p>On-chain contract: settlementPayer mapping + settlement dedup + hash dedup.</p><div class="file">contracts/FeedbackGateway.sol</div></div>
             <div class="arch-item new"><span class="tag new">new</span><h4>recordSettlement</h4><p>Facilitator or agent records settlementPayer[txHash] after settlement. Permissionless, first-writer wins.</p><div class="file">src/facilitator/app.py</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>Agent registration</h4><p>IdentityRegistry.register() mints agent NFT. Client discovers via tokenURI.</p><div class="file">ERC-8004 (real)</div></div>
-            <div class="arch-item new"><span class="tag new">new</span><h4>On-chain reputation</h4><p>ReputationRegistry stores feedback. Client calls submitFeedback() via EIP-7702.</p><div class="file">ERC-8004 (real)</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>Agent registration</h4><p>Mainnet IdentityRegistry.register() mints agent NFT. Client discovers via tokenURI.</p><div class="file">ERC-8004 (mainnet, 0x8004A169...)</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>On-chain reputation</h4><p>Mainnet ReputationRegistry stores feedback. Client calls submitFeedback() via EIP-7702. Permissionless giveFeedback — no mock needed.</p><div class="file">ERC-8004 (mainnet, 0x8004BAa1...)</div></div>
         </div>
     </section>
 
