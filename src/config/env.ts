@@ -92,6 +92,7 @@ export const ERC8004_RPC_URL =
 const ERC8004_RPC_URL_DEFAULTS: Record<number, string> = {
   11155111: "https://ethereum-sepolia-rpc.publicnode.com",
   8453: "https://mainnet-preconf.base.org",
+  1: "https://eth-mainnet.g.alchemy.com/v2/demo",
 };
 
 export function getErc8004RpcUrl(chainId: number): string {
@@ -110,25 +111,31 @@ const default8004 = getDefaultErc8004Addresses(ERC8004_NETWORK);
 // ERC-8004 Contract Addresses
 export const ERC8004_IDENTITY_REGISTRY_ADDRESS = (process.env.ERC8004_IDENTITY_REGISTRY_ADDRESS ||
   default8004.identityRegistry) as `0x${string}`;
-export const ERC8004_REPUTATION_REGISTRY_ADDRESS = (process.env.ERC8004_REPUTATION_REGISTRY_ADDRESS ||
-  default8004.reputationRegistry) as `0x${string}`;
+export const ERC8004_REPUTATION_REGISTRY_ADDRESS = (process.env
+  .ERC8004_REPUTATION_REGISTRY_ADDRESS || default8004.reputationRegistry) as `0x${string}`;
 // Delegate contract addresses per chain.
 // Built-in defaults for known chains; override with DELEGATE_CONTRACT_ADDRESS_<CHAIN_ID>
 // or fall back to DELEGATE_CONTRACT_ADDRESS for single-chain setups.
 const DELEGATE_CONTRACT_DEFAULTS: Record<number, `0x${string}`> = {
   11155111: "0x252367B463f77EFe33c151E9d9821788090EC4b5", // Ethereum Sepolia
-  8453: "0x097f9491a25c1D5087298db04B11c9A461dD0661",     // Base Mainnet
+  8453: "0x097f9491a25c1D5087298db04B11c9A461dD0661", // Base Mainnet
+  1: "0x0000000000000000000000000000000000000000", // Ethereum Mainnet — TODO: deploy and update
 };
 
-const DELEGATE_CONTRACT_ADDRESS_FALLBACK = process.env.DELEGATE_CONTRACT_ADDRESS as `0x${string}` | undefined;
+const DELEGATE_CONTRACT_ADDRESS_FALLBACK = process.env.DELEGATE_CONTRACT_ADDRESS as
+  | `0x${string}`
+  | undefined;
 
 export function getDelegateContractAddress(chainId: number): `0x${string}` | undefined {
-  const envOverride = process.env[`DELEGATE_CONTRACT_ADDRESS_${chainId}`] as `0x${string}` | undefined;
+  const envOverride = process.env[`DELEGATE_CONTRACT_ADDRESS_${chainId}`] as
+    | `0x${string}`
+    | undefined;
   return envOverride || DELEGATE_CONTRACT_DEFAULTS[chainId] || DELEGATE_CONTRACT_ADDRESS_FALLBACK;
 }
 
 // Back-compat: single address (used for startup validation log)
-export const DELEGATE_CONTRACT_ADDRESS = DELEGATE_CONTRACT_ADDRESS_FALLBACK || DELEGATE_CONTRACT_DEFAULTS[8453];
+export const DELEGATE_CONTRACT_ADDRESS =
+  DELEGATE_CONTRACT_ADDRESS_FALLBACK || DELEGATE_CONTRACT_DEFAULTS[8453];
 
 export const PORT = process.env.PORT || "4022";
 export const REDIS_URL = process.env.REDIS_URL;

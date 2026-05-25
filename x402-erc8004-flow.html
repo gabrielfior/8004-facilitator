@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>x402 x ERC-8004 Reputation Flow</title>
+    <style>
+        :root {
+            --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-5: 1.5rem; --space-6: 2rem;
+            --font-sm: 0.8rem; --font-base: 1rem; --font-lg: 1.25rem;
+            --radius: 0.5rem;
+            --text: #1f2937; --text-muted: #6b7280; --bg: #ffffff; --bg-subtle: #f9fafb; --border: #e5e7eb;
+            --c-client: #2563eb; --c-server: #0891b2; --c-agent: #7c3aed; --c-fac: #ca8a04; --c-chain: #6b7280;
+            --c-new: #7c3aed; --c-std: #6b7280;
+        }
+        * { margin:0;padding:0;box-sizing:border-box; }
+        body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; font-size:var(--font-base); line-height:1.5; color:var(--text); background:var(--bg); max-width:1100px; margin:0 auto; padding:var(--space-5); }
+        header { padding:var(--space-5) 0 var(--space-3); border-bottom:2px solid var(--border); margin-bottom:var(--space-5); }
+        header h1 { font-size:var(--font-xl); }
+        header p { font-size:var(--font-sm); color:var(--text-muted); margin-top:2px; }
+        .legend { display:flex; gap:var(--space-4); justify-content:center; flex-wrap:wrap; margin:var(--space-4) 0 var(--space-5); font-size:var(--font-sm); }
+        .legend-item { display:flex; align-items:center; gap:var(--space-2); }
+        .legend-swatch { width:20px; height:4px; border-radius:2px; display:inline-block; }
+        .parties { display:flex; gap:var(--space-2); justify-content:center; flex-wrap:wrap; margin-bottom:var(--space-5); }
+        .party { flex:1; min-width:120px; max-width:180px; padding:var(--space-3) var(--space-2); border-radius:var(--radius); border:2px solid var(--border); text-align:center; }
+        .party .icon { font-size:1.3rem; }
+        .party .name { font-weight:700; font-size:var(--font-base); margin-top:2px; }
+        .party .meta { font-size:0.65rem; color:var(--text-muted); font-family:monospace; }
+        .party .role { font-size:0.7rem; color:var(--text-muted); line-height:1.3; }
+        .party.client { border-color:var(--c-client); }
+        .party.server { border-color:var(--c-server); }
+        .party.fac { border-color:var(--c-fac); }
+        .party.agent-eoa { border-color:var(--c-agent); }
+        .party.chain { border-color:var(--c-chain); }
+        .delta { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-4); margin-bottom:var(--space-5); }
+        .delta-box { padding:var(--space-4); border-radius:var(--radius); }
+        .delta-box.std { border:2px solid var(--c-std); background:var(--bg-subtle); }
+        .delta-box.new { border:2px solid var(--c-new); background:#f5f3ff; }
+        .delta-box h3 { font-size:var(--font-base); margin-bottom:var(--space-2); }
+        .delta-box ul { padding-left:var(--space-4); font-size:var(--font-sm); }
+        .delta-box li { margin-bottom:var(--space-1); }
+        .delta-box code { font-family:'SF Mono','Fira Code',monospace; font-size:0.7rem; background:var(--bg); padding:0.05rem 0.25rem; border-radius:3px; border:1px solid var(--border); }
+        .row { display:grid; grid-template-columns:28px 1fr; gap:var(--space-3); padding:var(--space-2) var(--space-3); border-radius:var(--radius); background:var(--bg-subtle); align-items:start; margin-bottom:var(--space-2); }
+        .row.std { border-left:4px solid var(--c-std); }
+        .row.new { border-left:4px solid var(--c-new); background:#f5f3ff; }
+        .row.mixed { border-left:4px solid var(--c-fac); }
+        .row-num { width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700; color:#fff; flex-shrink:0; }
+        .row-num.grey { background:var(--c-std); }
+        .row-num.purple { background:var(--c-new); }
+        .row-num.blue { background:var(--c-client); }
+        .row-num.yellow { background:var(--c-fac); }
+        .row-num.green { background:#16a34a; }
+        .row-content { font-size:var(--font-sm); }
+        .row-arrow { font-weight:600; font-size:var(--font-sm); margin-bottom:2px; }
+        .row-badge { display:inline-block; font-size:0.55rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; padding:0.05rem 0.35rem; border-radius:3px; margin-left:var(--space-1); vertical-align:middle; }
+        .row-badge.std { background:#e5e7eb; color:#4b5563; }
+        .row-badge.new { background:#ede9fe; color:#5b21b6; }
+        .row-desc { color:var(--text-muted); font-size:0.75rem; line-height:1.4; }
+        .row-desc code { font-family:'SF Mono','Fira Code',monospace; font-size:0.7rem; background:var(--bg); padding:0.05rem 0.25rem; border-radius:3px; border:1px solid var(--border); }
+        .ascii-box { background:#1a1a2e; color:#e0e0e0; padding:var(--space-4); border-radius:var(--radius); font-family:'SF Mono','Fira Code',monospace; font-size:0.55rem; line-height:1.15; overflow-x:auto; white-space:pre; margin:var(--space-3) 0; }
+        .ascii-box .dim { color:#6b7280; }
+        .ascii-box .new { color:#c4b5fd; font-weight:bold; }
+        .arch { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:var(--space-2); margin:var(--space-3) 0; }
+        .arch-item { padding:var(--space-3); border-radius:var(--radius); border:1px solid var(--border); }
+        .arch-item.new { border-color:var(--c-new); background:#f5f3ff; }
+        .arch-item h4 { font-size:var(--font-sm); }
+        .arch-item .tag { display:inline-block; font-size:0.55rem; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; padding:0.05rem 0.35rem; border-radius:3px; margin-bottom:var(--space-1); }
+        .arch-item .tag.std { background:#e5e7eb; color:#4b5563; }
+        .arch-item .tag.new { background:#ede9fe; color:#5b21b6; }
+        .arch-item p { font-size:0.75rem; color:var(--text-muted); }
+        .arch-item .file { font-family:monospace; font-size:0.65rem; color:var(--text-muted); margin-top:var(--space-1); }
+        table { width:100%; border-collapse:collapse; font-size:var(--font-sm); margin:var(--space-3) 0; }
+        th, td { padding:var(--space-2) var(--space-3); text-align:left; border-bottom:1px solid var(--border); }
+        th { font-weight:600; background:var(--bg-subtle); font-size:0.75rem; }
+        td { font-size:0.75rem; }
+        td.new { background:#f5f3ff; }
+        section { margin-top:var(--space-6); }
+        h2 { font-size:var(--font-lg); margin-bottom:var(--space-3); padding-bottom:var(--space-1); border-bottom:1px solid var(--border); }
+        footer { text-align:center; color:var(--text-muted); font-size:var(--font-sm); padding:var(--space-4) 0; border-top:2px solid var(--border); margin-top:var(--space-6); }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>x402 x ERC-8004 Reputation Flow</h1>
+        <p>What we built vs what x402 gives us out of the box</p>
+        <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Updated: 2026-05-25</p>
+    </header>
+
+    <div class="legend">
+        <span class="legend-item"><span class="legend-swatch" style="background:var(--c-std)"></span> Standard x402 (unchanged)</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:var(--c-new)"></span> ERC-8004 addition (new code)</span>
+    </div>
+
+    <div class="parties">
+        <div class="party client"><div class="icon">&#x1f9d1;&#x200d;&#x1f4bb;</div><div class="name">Client</div><div class="role">Pays, polls on-chain<br>settlement, submits feedback</div><div class="meta">Fresh EOA</div></div>
+        <div class="party server"><div class="icon">&#x1f5a5;&#xfe0f;</div><div class="name">Resource Server</div><div class="role">Serves /weather</div><div class="meta">:4021 FastAPI</div></div>
+        <div class="party fac"><div class="icon">&#x2699;&#xfe0f;</div><div class="name">Facilitator</div><div class="role">Verifies, settles,<br>records payer</div><div class="meta">:4022 FastAPI</div></div>
+        <div class="party agent-eoa"><div class="icon">&#x1f916;</div><div class="name">Agent</div><div class="role">Receives payment,<br>builds reputation</div><div class="meta">Fresh EOA, agentId</div></div>
+        <div class="party chain"><div class="icon">&#x26c8;&#xfe0f;</div><div class="name">On-chain</div><div class="role">IdentityRegistry (mainnet)<br>ReputationRegistry (mainnet)<br>FeedbackGateway<br>(settlementPayer + dedup)<br>Permit2</div><div class="meta">Anvil fork (Prague)</div></div>
+    </div>
+
+    <div class="delta">
+        <div class="delta-box std">
+            <h3>&#x2699; Standard x402 (what the SDK gives us)</h3>
+            <ul>
+                <li><strong>Payment flow</strong> — client gets 402, signs EIP-3009, retries, facilitator verifies + settles</li>
+                <li><strong>PaymentMiddlewareASGI</strong> — intercepts requests with PAYMENT-SIGNATURE header, calls verify/settle</li>
+                <li><strong>x402Client / x402Facilitator / x402ResourceServer</strong> — core classes for each party</li>
+                <li><strong>ExactEvmServerScheme / ExactEvmFacilitatorScheme</strong> — EIP-3009 + Permit2 support</li>
+                <li><strong>HTTP facilitator client</strong> — server calls facilitator's /verify and /settle via HTTP</li>
+                <li><strong>PAYMENT-RESPONSE header</strong> — settlement info returned to client</li>
+            </ul>
+        </div>
+        <div class="delta-box new">
+            <h3>&#x2728; Our additions (ERC-8004 reputation layer)</h3>
+            <ul>
+                <li><strong>FeedbackGateway.recordSettlement()</strong> — stores <code>settlementPayer[txHash] = payer</code> after settlement</li>
+                <li><strong>Payer-gated verified feedback</strong> — <code>msg.sender</code> must match <code>settlementPayer[txHash]</code> for verified path</li>
+                <li><strong>Settlement dedup</strong> — <code>usedSettlements[txHash]</code> enforces one settlement = one verified feedback</li>
+                <li><strong>Unverified fallback</strong> — if no settlement binding, feedback still counts via dedup (lower weight)</li>
+                <li><strong>Direct on-chain feedback</strong> — client calls <code>submitFeedback</code> via EIP-7702 (Anvil Prague, Sepolia Pectra) or direct call fallback; no facilitator needed</li>
+                <li><strong>Permissionless recording</strong> — facilitator or agent can call <code>recordSettlement</code>; three-tier resilience</li>
+                <li><strong>Agent registration</strong> — <code>IdentityRegistry.register()</code> mints agent NFT</li>
+            </ul>
+        </div>
+    </div>
+
+    <section>
+        <h2>Flow steps — standard vs new</h2>
+
+        <div class="row std">
+            <div><div class="row-num grey">1</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Client &rarr; Resource Server <span class="row-badge std">x402</span></div>
+                <div class="row-desc"><code>GET /weather</code>. No payment header. Server returns 402 + <code>X-Payment-Requirements</code> (USDC $0.01 or DAI $0.01).</div>
+            </div>
+        </div>
+        <div class="row std">
+            <div><div class="row-num grey">2</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Client &rarr; Facilitator <span class="row-badge std">x402</span></div>
+                <div class="row-desc">Client signs token transfer (EIP-3009 for USDC, Permit2 for DAI). Sends <code>POST /verify</code>. Facilitator validates signature + simulates.</div>
+            </div>
+        </div>
+        <div class="row std">
+            <div><div class="row-num grey">3</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Client &rarr; Resource Server <span class="row-badge std">x402</span></div>
+                <div class="row-desc">Retries <code>GET /weather</code> with <code>PAYMENT-SIGNATURE</code> header. Middleware intercepts.</div>
+            </div>
+        </div>
+        <div class="row std">
+            <div><div class="row-num grey">4</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Server &rarr; Facilitator &rarr; On-chain <span class="row-badge std">x402</span></div>
+                <div class="row-desc"><code>POST /settle</code>. Facilitator executes <code>transferWithAuthorization</code> (USDC) or Permit2 Proxy <code>settle</code> (DAI).</div>
+            </div>
+        </div>
+        <div class="row std">
+            <div><div class="row-num grey">5</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Server &rarr; Client <span class="row-badge std">x402</span></div>
+                <div class="row-desc"><code>200 OK</code> + <code>PAYMENT-RESPONSE</code> header (settlement tx hash, payer). Client receives the settlement <code>txHash</code>.</div>
+            </div>
+        </div>
+        <div class="row new">
+            <div><div class="row-num purple">6</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Facilitator (or Agent) &rarr; On-chain <span class="row-badge new">new</span></div>
+                <div class="row-desc">After settlement: calls <code>FeedbackGateway.recordSettlement(txHash, clientAddress)</code>. Stores <code>settlementPayer[txHash] = clientAddress</code>. Permissionless — facilitator, agent, or anyone can record.</div>
+            </div>
+        </div>
+        <div class="row new">
+            <div><div class="row-num purple">7</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Client &rarr; On-chain (pays own gas) <span class="row-badge new">new</span></div>
+                <div class="row-desc">Polls <code>settlementPayer[txHash]</code> from chain until <code>!= address(0)</code>. Sends <code>submitFeedback</code> via EIP-7702 self-call (<code>from: client, to: client, authorizationList: [auth]</code>) on Anvil Prague / Sepolia Pectra, or direct call (<code>to: gateway</code>) on chains without EIP-7702. Contract checks <code>settlementPayer[txHash] == msg.sender</code> for verified path (with settlement dedup). Falls back to unverified if no binding. No relayer.</div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>Detailed: Client submits feedback (step 7)</h2>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:var(--space-3);">The client submits on-chain feedback without any relayer or facilitator involvement. EIP-7702 delegation ensures <code>msg.sender</code> on <code>ReputationRegistry</code> is the client EOA (correct attribution). No reqHash, respHash, or commitment preimage needed — identity replaces secrets.</p>
+
+        <div class="row new">
+            <div><div class="row-num purple">7a</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Poll settlementPayer <span class="row-badge new">client</span></div>
+                <div class="row-desc">Poll <code>FeedbackGateway.settlementPayer[txHash]</code> until <code>!= address(0)</code>. Waits for facilitator or agent to record it after settlement. <code>txHash</code> comes from <code>PAYMENT-RESPONSE</code> header.</div>
+            </div>
+        </div>
+
+        <div class="row new">
+            <div><div class="row-num purple">7b</div></div>
+            <div class="row-content">
+                <div class="row-arrow">Call submitFeedback <span class="row-badge new">client</span></div>
+                <div class="row-desc">Two modes controlled by <code>EIP_7702_SUPPORTED</code> env var:<br>
+                <strong>EIP-7702</strong> (Anvil Prague, Sepolia Pectra): signs authorization delegating EOA to <code>FeedbackGateway</code>, sends <code>{ from: client, to: client, authorizationList: [auth], data: submitFeedback(...) }</code> — registry records client as author<br>
+                <strong>Direct</strong> (chains without EIP-7702): sends <code>{ from: client, to: gateway, data: submitFeedback(...) }</code> — registry sees gateway as author</div>
+            </div>
+        </div>
+
+        <div class="row new">
+            <div><div class="row-num purple">7c</div></div>
+            <div class="row-content">
+                <div class="row-arrow">FeedbackGateway executes <span class="row-badge new">on-chain</span></div>
+                <div class="row-desc">Inside <code>submitFeedback</code>, <code>msg.sender = client</code> (the EOA). The contract:<br>
+                1. If <code>settlementTxHash != bytes32(0) && settlementPayer[txHash] == msg.sender</code> → verified path: marks <code>usedSettlements[txHash] = true</code><br>
+                2. If settlement already used → revert<br>
+                3. Calls <code>consumeInteractionHash(feedbackHash)</code> for dedup (computed as <code>keccak256(agentId, txHash)</code>)<br>
+                4. Calls <code>ReputationRegistry.giveFeedback(...)</code> — registry records <code>msg.sender = client</code> as author</div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>ASCII Flow — dim = x402 standard, purple = our additions</h2>
+        <div class="ascii-box">   Client (fresh)    Resource Svr      Facilitator       Agent (fresh)      On-chain
+                        (:4021)          (:4022)          (own key)       (contracts)
+    <span class="dim">|                   |                |                |               |
+  1 |-- GET /weather -->|                |                |               |
+    |&lt;-- 402 + options -|                |                |               |
+    |                   |                |                |               |
+  2 |-------------------|- POST /verify ->|                |               |
+    |                   |                |-- simulate --->|               |
+    |                   |                |                |               |
+  3 |-- GET /weather -->|                |                |               |
+    |   + PAYMENT-SIG   |                |                |               |
+    |                   |                |                |               |
+  4 |                   |- POST /settle ->|                |               |
+    |                   |                |-- USDC/DAI --->|               |
+    |                   |                |   to Agent     |               |
+    |                   |                |                |               |
+  5 |&lt;-- 200 + tx hash -|                |                |               |
+    |                   |                |                |               |</span>
+<span class="new">  6 |                   |                |-- recordSttlm ->| FeedGw       |
+    |                   |                |   (txHash,     |  settlementP |
+    |                   |                |    payer)      |  [tx]=payer  |
+    |                   |                |                |               |
+  7 |-- submitFeedback ->|                |                |               |
+    |   (via EIP-7702)  |                |-- payer chk -->|  settlementP |
+    |                   |                |-- dedup ------>|  (usedSttlmts)|
+    |                   |                |-- giveFdbk --->| ReputationR  |</span>
+
+<span class="dim">  Dim text = standard x402 (unchanged from SDK)</span>
+<span class="new">  Purple   = our ERC-8004 additions (new code)</span></div>
+    </section>
+
+    <section>
+        <h2>Architecture — what's x402 vs what we built</h2>
+        <div class="arch">
+            <div class="arch-item"><span class="tag std">x402</span><h4>USDC (real)</h4><p>Mainnet USDC on fork. EIP-3009 transferWithAuthorization. No prior approval.</p><div class="file">0xA0b869... (fork)</div></div>
+            <div class="arch-item"><span class="tag std">x402</span><h4>DAI (real)</h4><p>EIP-2612 token. Permit2 via x402 Proxy. Client pre-approves Permit2 contract.</p><div class="file">0x6B1754... (fork)</div></div>
+            <div class="arch-item"><span class="tag std">x402</span><h4>PaymentMiddlewareASGI</h4><p>FastAPI middleware that intercepts PAYMENT-SIGNATURE, calls verify/settle. Core x402 flow.</p><div class="file">x402 SDK</div></div>
+            <div class="arch-item"><span class="tag std">x402</span><h4>Facilitator (verify/settle)</h4><p>x402Facilitator + HTTP endpoints. Verifies signatures, simulates, settles on-chain.</p><div class="file">src/facilitator/app.py</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>FeedbackGateway</h4><p>On-chain contract: settlementPayer mapping + settlement dedup + hash dedup.</p><div class="file">contracts/FeedbackGateway.sol</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>recordSettlement</h4><p>Facilitator or agent records settlementPayer[txHash] after settlement. Permissionless, first-writer wins.</p><div class="file">src/facilitator/app.py</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>Agent registration</h4><p>Mainnet IdentityRegistry.register() mints agent NFT. Client discovers via tokenURI.</p><div class="file">ERC-8004 (mainnet, 0x8004A169...)</div></div>
+            <div class="arch-item new"><span class="tag new">new</span><h4>On-chain reputation</h4><p>Mainnet ReputationRegistry stores feedback. Client calls submitFeedback() via EIP-7702. Permissionless giveFeedback — no mock needed.</p><div class="file">ERC-8004 (mainnet, 0x8004BAa1...)</div></div>
+        </div>
+    </section>
+
+    <footer>
+        <p>naive_implementation &mdash; x402-erc-8004 &mdash; May 2026</p>
+    </footer>
+</body>
+</html>

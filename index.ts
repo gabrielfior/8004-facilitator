@@ -36,9 +36,8 @@ import {
 // Configuration & Initialization
 // ============================================================================
 
-const { evmAccount, baseSepoliaSigner, baseMainnetSigner } = createFacilitatorSigners(
-  FACILITATOR_PRIVATE_KEY as `0x${string}`,
-);
+const { evmAccount, baseSepoliaSigner, baseMainnetSigner, ethSepoliaSigner } =
+  createFacilitatorSigners(FACILITATOR_PRIVATE_KEY as `0x${string}`);
 console.log("facilitator address:", evmAccount.address);
 
 const facilitator = new x402Facilitator();
@@ -48,12 +47,16 @@ const facilitator = new x402Facilitator();
 facilitator.register(["eip155:84532"], new ExactEvmScheme(baseSepoliaSigner));
 // @ts-ignore
 facilitator.register(["eip155:8453"], new ExactEvmScheme(baseMainnetSigner));
+// @ts-ignore
+facilitator.register(["eip155:11155111"], new ExactEvmScheme(ethSepoliaSigner));
 
 // Register v1 networks - separate registration for each chain
 // @ts-ignore
 facilitator.registerV1(["base-sepolia"] as any, new ExactEvmSchemeV1Facilitator(baseSepoliaSigner));
 // @ts-ignore
 facilitator.registerV1(["base"] as any, new ExactEvmSchemeV1Facilitator(baseMainnetSigner));
+// @ts-ignore
+facilitator.registerV1(["eth-sepolia"] as any, new ExactEvmSchemeV1Facilitator(ethSepoliaSigner));
 
 // ============================================================================
 // Data Stores
@@ -298,14 +301,7 @@ app.get("/metrics", async (req, res) => {
  */
 app.post("/register", async (req, res) => {
   try {
-    const {
-      tokenURI,
-      metadata,
-      network,
-      x402Version = 1,
-      agentAddress,
-      authorization,
-    } = req.body;
+    const { tokenURI, metadata, network, x402Version = 1, agentAddress, authorization } = req.body;
 
     console.log(`🔍 [POST /register] Received registration request`);
     console.log(`   agentAddress: ${agentAddress}`);

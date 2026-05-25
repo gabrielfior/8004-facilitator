@@ -1,5 +1,5 @@
 import { createWalletClient, http, publicActions } from "viem";
-import { baseSepolia, base } from "viem/chains";
+import { baseSepolia, base, sepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { toFacilitatorEvmSigner } from "@x402/evm";
 
@@ -15,6 +15,12 @@ export function createFacilitatorSigners(privateKey: `0x${string}`) {
   const baseMainnetClient = createWalletClient({
     account: evmAccount,
     chain: base,
+    transport: http(),
+  }).extend(publicActions);
+
+  const ethSepoliaClient = createWalletClient({
+    account: evmAccount,
+    chain: sepolia,
     transport: http(),
   }).extend(publicActions);
 
@@ -92,9 +98,47 @@ export function createFacilitatorSigners(privateKey: `0x${string}`) {
     getCode: (args: { address: `0x${string}` }) => baseMainnetClient.getCode(args),
   });
 
+  const ethSepoliaSigner = toFacilitatorEvmSigner({
+    address: evmAccount.address,
+    readContract: (args: {
+      address: `0x${string}`;
+      abi: readonly unknown[];
+      functionName: string;
+      args?: readonly unknown[];
+    }) =>
+      ethSepoliaClient.readContract({
+        ...args,
+        args: args.args || [],
+      }),
+    verifyTypedData: (args: {
+      address: `0x${string}`;
+      domain: Record<string, unknown>;
+      types: Record<string, unknown>;
+      primaryType: string;
+      message: Record<string, unknown>;
+      signature: `0x${string}`;
+    }) => ethSepoliaClient.verifyTypedData(args as any),
+    writeContract: (args: {
+      address: `0x${string}`;
+      abi: readonly unknown[];
+      functionName: string;
+      args: readonly unknown[];
+    }) =>
+      ethSepoliaClient.writeContract({
+        ...args,
+        args: args.args || [],
+      }),
+    waitForTransactionReceipt: (args: { hash: `0x${string}` }) =>
+      ethSepoliaClient.waitForTransactionReceipt(args),
+    sendTransaction: (args: { to: `0x${string}`; data: `0x${string}`; value?: bigint }) =>
+      ethSepoliaClient.sendTransaction(args),
+    getCode: (args: { address: `0x${string}` }) => ethSepoliaClient.getCode(args),
+  });
+
   return {
     evmAccount,
     baseSepoliaSigner,
     baseMainnetSigner,
+    ethSepoliaSigner,
   };
 }
