@@ -148,7 +148,7 @@ async def run_paying_client(
         base_fee = w3.eth.get_block("pending").get("baseFeePerGas", w3.eth.gas_price)
         max_priority = w3.to_wei(1, "gwei")
         max_fee = base_fee + max_priority
-        gas_limit = 100_000
+        gas_limit = 300_000
 
         authorization = Account.sign_authorization(
             {"chainId": w3.eth.chain_id, "address": gateway_addr, "nonce": tx_nonce + 1},

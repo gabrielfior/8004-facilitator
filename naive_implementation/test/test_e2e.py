@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import time
 from pathlib import Path
@@ -52,19 +53,21 @@ def test_e2e_payment_and_feedback(setup):
     # --- Initialize ---
     from src.facilitator.app import create_app as create_facilitator
     from src.agent_server.app import create_app as create_agent_server
+
+    os.environ["EIP_7702_SUPPORTED"] = "true"
     from src.client.app import run_paying_client
 
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
-    # --- Start servers ---
+    # --- Start servers (facilitator must be up before agent_server initializes) ---
     facilitator_app = create_facilitator(feedback_gateway=setup.feedback_gateway)
-    agent_app = create_agent_server(agent_address=setup.agent_account.address)
-
     t1 = threading.Thread(target=_run_uvicorn, args=(facilitator_app, FACILITATOR_PORT), daemon=True)
-    t2 = threading.Thread(target=_run_uvicorn, args=(agent_app, SERVER_PORT), daemon=True)
     t1.start()
-    t2.start()
     _wait_for_http(FACILITATOR_URL)
+
+    agent_app = create_agent_server(agent_address=setup.agent_account.address)
+    t2 = threading.Thread(target=_run_uvicorn, args=(agent_app, SERVER_PORT), daemon=True)
+    t2.start()
     _wait_for_http(SERVER_URL)
 
     # --- Run client ---
@@ -86,10 +89,21 @@ def test_e2e_payment_and_feedback(setup):
     # We can't know the txHash without capturing it from the client log,
     # but we can verify the FeedbackGateway has at least one settlement
 
-    # Verify the agent has reputation
+    # Verify the agent has reputation (real ReputationRegistry uses getSummary with 4 args)
     registry = w3.eth.contract(
         address=Web3.to_checksum_address(REPUTATION_REGISTRY),
         abi=load_reputation_registry_abi(),
     )
-    summary = registry.functions.getSummary(setup.agent_id).call()
+    # Verify feedback is attributed to the client EOA (not to the FeedbackGateway)
+    client_address = Web3.to_checksum_address(setup.client_account.address)
+
+    summary = registry.functions.getSummary(
+        setup.agent_id, [client_address], "", ""
+    ).call()
     assert summary[0] > 0, f"Agent {setup.agent_id} should have feedback count > 0"
+
+    client_index = registry.functions.getLastIndex(setup.agent_id, client_address).call()
+    assert client_index > 0, f"Client {client_address} should have feedback index > 0"
+
+    feedback = registry.functions.readFeedback(setup.agent_id, client_address, client_index).call()
+    assert feedback[0] == 95, f"Expected feedback value 95, got {feedback[0]}"

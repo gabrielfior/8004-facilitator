@@ -45,7 +45,7 @@ class LocalSetup:
     facilitator_account: Account
     client_account: Account
     agent_account: Account
-    mock_registry: str = ""
+    reputation_registry: str = ""
 
 
 def require_anvil(rpc_url: str) -> Web3:
@@ -265,34 +265,6 @@ def bootstrap() -> LocalSetup:
 
     feedback_gateway = deploy_feedback_gateway(w3, facilitator_key)
 
-    # Deploy MockRegistry for local testing (replaces mainnet ReputationRegistry)
-    try:
-        mock_artifact_path = ROOT / "out" / "MockRegistry.sol" / "MockRegistry.json"
-        if mock_artifact_path.exists():
-            mock_artifact = json.loads(mock_artifact_path.read_text())
-            mock_registry = w3.eth.contract(
-                abi=mock_artifact["abi"],
-                bytecode=mock_artifact["bytecode"]["object"],
-            )
-            tx = mock_registry.constructor().build_transaction({
-                "from": facilitator_account.address,
-                "nonce": w3.eth.get_transaction_count(facilitator_account.address),
-                "gas": 200_000,
-                "gasPrice": w3.to_wei(2, "gwei"),
-                "chainId": chain_id,
-            })
-            signed = facilitator_account.sign_transaction(tx)
-            receipt = w3.eth.wait_for_transaction_receipt(
-                w3.eth.send_raw_transaction(signed.raw_transaction)
-            )
-            mock_registry_addr = Web3.to_checksum_address(receipt.contractAddress)
-            logger.info("Deployed MockRegistry at %s", mock_registry_addr)
-        else:
-            mock_registry_addr = REPUTATION_REGISTRY
-    except Exception as exc:
-        logger.warning("MockRegistry deployment failed: %s", exc)
-        mock_registry_addr = REPUTATION_REGISTRY
-
     try:
         agent_id = register_agent(w3, agent_account.key.hex())
     except Exception as exc:
@@ -311,7 +283,7 @@ def bootstrap() -> LocalSetup:
         facilitator_account=facilitator_account,
         client_account=client_account,
         agent_account=agent_account,
-        mock_registry=mock_registry_addr,
+        reputation_registry=REPUTATION_REGISTRY,
     )
 
 
@@ -347,6 +319,6 @@ if __name__ == "__main__":
         f"AGENT_ADDRESS={setup.agent_account.address}\n"
         f"FACILITATOR_ADDRESS={setup.facilitator_account.address}\n"
         f"CLIENT_KEY={setup.client_account.key.hex()}\n"
-        f"REPUTATION_REGISTRY={setup.mock_registry}\n"
+        f"REPUTATION_REGISTRY={setup.reputation_registry}\n"
     )
     print(f"\nWrote {env_path}")
